@@ -16,20 +16,20 @@ from ..services.quote_service import QuoteService
 from ..utils.message_utils import reply_handle
 
 delete_quote_alc = Alconna("删除")
-delete_record = on_alconna(delete_quote_alc, aliases={"delete"}, permission=SUPERUSER)
+delete_record = on_alconna(delete_quote_alc, aliases={"delete"}, permission=SUPERUSER, block=True)
 
 addtag_alc = Alconna("addtag", Args["tags", MultiVar(str)])
-addtag_cmd = on_alconna(addtag_alc, rule=admin_check(5))
+addtag_cmd = on_alconna(addtag_alc, rule=admin_check(5), block=True)
 
 deltag_alc = Alconna("deltag", Args["tags", MultiVar(str)])
-deltag_cmd = on_alconna(deltag_alc, rule=admin_check(5))
+deltag_cmd = on_alconna(deltag_alc, rule=admin_check(5), block=True)
 
 delete_by_keyword_alc = Alconna(
     "删除关键词",
     Args["target_user?", At]["keyword", str],
     Option("-g", Args["group_id", str], help_text="指定群组ID"),
 )
-delete_by_keyword_cmd = on_alconna(delete_by_keyword_alc, permission=SUPERUSER)
+delete_by_keyword_cmd = on_alconna(delete_by_keyword_alc, permission=SUPERUSER, block=True)
 
 
 @delete_record.handle()

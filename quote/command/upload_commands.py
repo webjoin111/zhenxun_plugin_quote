@@ -24,19 +24,19 @@ from ..utils.image_utils import copy_images_files, download_qq_avatar, get_img_h
 from ..utils.message_utils import get_group_id_from_session, send_group_message
 
 upload_alc = Alconna("上传", Args["image?", UniImage])
-save_img_cmd = on_alconna(upload_alc, auto_send_output=False)
+save_img_cmd = on_alconna(upload_alc, auto_send_output=False, block=True)
 
 make_record_alc = Alconna("记录")
-make_record_cmd = on_alconna(make_record_alc)
+make_record_cmd = on_alconna(make_record_alc, block=True)
 
 render_quote_alc = Alconna("生成")
-render_quote_cmd = on_alconna(render_quote_alc)
+render_quote_cmd = on_alconna(render_quote_alc, block=True)
 
 batch_upload_alc = Alconna("batch_upload", Args["content?", AllParam])
-script_batch_cmd = on_alconna(batch_upload_alc, permission=SUPERUSER)
+script_batch_cmd = on_alconna(batch_upload_alc, permission=SUPERUSER, block=True)
 
 copy_batch_alc = Alconna("batch_copy", Args["content?", AllParam])
-copy_batch_cmd = on_alconna(copy_batch_alc, permission=SUPERUSER)
+copy_batch_cmd = on_alconna(copy_batch_alc, permission=SUPERUSER, block=True)
 
 
 @save_img_cmd.handle()

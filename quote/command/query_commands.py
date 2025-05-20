@@ -23,7 +23,7 @@ quote_alc = Alconna("语录", Args["target_user?", At]["search_key?", str])
 record_pool = on_alconna(quote_alc, priority=2, block=True)
 
 alltag_alc = Alconna("alltag")
-alltag_cmd = on_alconna(alltag_alc, aliases={"标签", "tag"})
+alltag_cmd = on_alconna(alltag_alc, aliases={"标签", "tag"}, block=True)
 
 stats_alc = Alconna(
     "语录统计",
