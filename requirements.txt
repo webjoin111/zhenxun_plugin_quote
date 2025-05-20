@@ -4,6 +4,7 @@ tortoise-orm>=0.19.0
 Pillow>=9.2.0
 emoji>=2.2.0
 aiofiles>=0.8.0
+spacy_pkuseg>=0.0.25
 
 # OCR引擎依赖
 easyocr>=1.7.0
@@ -14,3 +15,10 @@ easyocr>=1.7.0
 
 # AI识别依赖
 httpx>=0.24.0
+
+# 命令解析依赖
+nonebot-plugin-alconna>=0.30.0
+arclet-alconna>=1.7.0
+
+# 其他依赖
+nonebot-plugin-waiter>=0.3.0
