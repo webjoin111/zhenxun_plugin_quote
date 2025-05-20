@@ -167,8 +167,8 @@ __plugin_meta__ = PluginMetadata(
 try:
     from zhenxun.services.db_context import MODELS
 
-    if "zhenxun.plugins.nonebot_plugin_quote.model" not in MODELS:
-        MODELS.append("zhenxun.plugins.nonebot_plugin_quote.model")
+    if "zhenxun.plugins.quote.model" not in MODELS:
+        MODELS.append("zhenxun.plugins.quote.model")
         logger.info("Quote 模型已添加到 MODELS 列表", "群聊语录")
 except ImportError:
     logger.error("无法导入 zhenxun.services.db_context，Quote 模型注册失败", "群聊语录")
