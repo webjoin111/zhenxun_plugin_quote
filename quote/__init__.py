@@ -5,51 +5,6 @@ from nonebot.plugin import PluginMetadata
 
 from zhenxun.configs.utils import PluginExtraData, RegisterConfig
 from zhenxun.services.log import logger
-
-driver = get_driver()
-
-
-@driver.on_startup
-async def init_services():
-    """初始化服务"""
-
-    try:
-        from .services.ai_service import AIService
-
-        await AIService.initialize()
-        logger.info("AI服务初始化完成", "群聊语录")
-    except Exception as e:
-        logger.error(f"AI服务初始化失败: {e}", "群聊语录", e=e)
-
-    try:
-        from .services.ocr_service import OCRService
-
-        await OCRService.initialize_engine()
-        logger.info("OCR服务初始化完成", "群聊语录")
-    except Exception as e:
-        logger.error(f"OCR服务初始化失败: {e}", "群聊语录", e=e)
-
-
-@driver.on_shutdown
-async def shutdown_services():
-    """关闭服务"""
-    try:
-        from .services.ai_service import AIService
-
-        AIService.shutdown()
-        logger.info("AI服务已关闭", "群聊语录")
-    except Exception as e:
-        logger.error(f"AI服务关闭失败: {e}", "群聊语录", e=e)
-
-    try:
-        from .services.ocr_service import OCRService
-
-        OCRService.shutdown()
-        logger.info("OCR服务已关闭", "群聊语录")
-    except Exception as e:
-        logger.error(f"OCR服务关闭失败: {e}", "群聊语录", e=e)
-
-
 from .command.manage_commands import (  # noqa: F401
     addtag_cmd,
     delete_by_keyword_cmd,
@@ -71,6 +26,51 @@ from .command.upload_commands import (  # noqa: F401
 from .config import quote_path
 
 os.makedirs(quote_path, exist_ok=True)
+driver = get_driver()
+
+
+@driver.on_startup
+async def init_services():
+    """初始化"""
+
+    try:
+        from .services.ai_service import AIService
+
+        await AIService.initialize()
+        logger.info("AI服务初始化完成", "群聊语录")
+    except Exception as e:
+        logger.error(f"AI服务初始化失败: {e}", "群聊语录", e=e)
+
+    try:
+        from .services.ocr_service import OCRService
+
+        await OCRService.initialize_engine()
+        logger.info("OCR服务初始化完成", "群聊语录")
+    except Exception as e:
+        logger.error(f"OCR服务初始化失败: {e}", "群聊语录", e=e)
+
+
+@driver.on_shutdown
+async def shutdown_services():
+    """关闭"""
+    try:
+        from .services.ai_service import AIService
+
+        AIService.shutdown()
+        logger.info("AI服务已关闭", "群聊语录")
+    except Exception as e:
+        logger.error(f"AI服务关闭失败: {e}", "群聊语录", e=e)
+
+    try:
+        from .services.ocr_service import OCRService
+
+        OCRService.shutdown()
+        logger.info("OCR服务已关闭", "群聊语录")
+    except Exception as e:
+        logger.error(f"OCR服务关闭失败: {e}", "群聊语录", e=e)
+
+
+
 
 __plugin_meta__ = PluginMetadata(
     name="群聊语录",
@@ -165,11 +165,15 @@ __plugin_meta__ = PluginMetadata(
 
 
 try:
+    import sys
     from zhenxun.services.db_context import MODELS
 
-    if "zhenxun.plugins.quote.model" not in MODELS:
-        MODELS.append("zhenxun.plugins.quote.model")
-        logger.info("Quote 模型已添加到 MODELS 列表", "群聊语录")
+    current_module = sys.modules[__name__]
+    model_path = f"{current_module.__package__}.model"
+
+    if model_path not in MODELS:
+        MODELS.append(model_path)
+        logger.info(f"Quote 模型已添加到 MODELS 列表: {model_path}", "群聊语录")
 except ImportError:
     logger.error("无法导入 zhenxun.services.db_context，Quote 模型注册失败", "群聊语录")
 except Exception as e:

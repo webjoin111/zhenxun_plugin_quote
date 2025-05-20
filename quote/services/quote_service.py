@@ -34,22 +34,7 @@ class QuoteService:
         image_hash: str | None = None,
         uploader_user_id: str | None = None,
     ) -> tuple[Quote | None, bool]:
-        """向数据库添加语录
-
-        参数:
-            group_id: 群组ID
-            image_path: 图片路径
-            ocr_content: OCR识别文本
-            recorded_text: 记录的文本
-            quoted_user_id: 被记录用户的QQ号
-            image_hash: 图片哈希值，如果为None则会自动计算
-            uploader_user_id: 上传者ID
-
-        返回:
-            tuple[Quote | None, bool]:
-                - 第一个元素: Quote对象或None（失败时）
-                - 第二个元素: 是否为新添加的语录（True）或重复语录（False）
-        """
+        """向数据库添加语录"""
         try:
             logger.info(
                 f"开始添加语录 - 群组: {group_id}, 图片路径: {image_path}, 被记录用户: {quoted_user_id}, 上传者: {uploader_user_id}",

@@ -82,13 +82,10 @@ async def save_img_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_
                     image_url_for_httpx = seg.data.get("url", None)
                     break
             if not file_name and not image_url_for_httpx:
-                await save_img_cmd.finish(
-                    "回复的消息中未直接找到图片文件标识或URL，请确认回复的是图片消息。"
-                )
+                await save_img_cmd.finish("回复的消息中未直接找到图片文件标识或URL，请确认回复的是图片消息。")
             elif not file_name and image_url_for_httpx:
                 logger.info(
-                    f"未在回复中找到图片file字段, 但找到了URL: {image_url_for_httpx}. "
-                    f"尝试使用httpx下载.",
+                    f"未在回复中找到图片file字段, 但找到了URL: {image_url_for_httpx}. 尝试使用httpx下载.",
                     "群聊语录",
                 )
         else:
@@ -129,15 +126,11 @@ async def save_img_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_
                 response = await client.get(image_url_for_httpx)
                 if response.status_code == 200:
                     img_data = response.content
-                    temp_image_path = os.path.join(
-                        quote_path, f"temp_{uuid.uuid4().hex}.png"
-                    )
+                    temp_image_path = os.path.join(quote_path, f"temp_{uuid.uuid4().hex}.png")
                     async with aiofiles.open(temp_image_path, "wb") as f:
                         await f.write(img_data)
                 else:
-                    await save_img_cmd.finish(
-                        f"httpx 下载失败, status: {response.status_code}"
-                    )
+                    await save_img_cmd.finish(f"httpx 下载失败, status: {response.status_code}")
                     return
         except Exception as httpx_e:
             await save_img_cmd.finish(f"httpx 下载异常: {httpx_e}")
@@ -224,22 +217,16 @@ async def save_img_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_
                 "send_group_msg",
                 **{
                     "group_id": int(group_id),
-                    "message": (
-                        MessageSegment.reply(message_id) + "保存失败，可能是数据库错误"
-                    ),
+                    "message": (MessageSegment.reply(message_id) + "保存失败，可能是数据库错误"),
                 },
             )
     else:
-        logger.info(
-            f"上传指令在非群聊环境 ({session_id}) 中被调用，未处理。", "群聊语录"
-        )
+        logger.info(f"上传指令在非群聊环境 ({session_id}) 中被调用，未处理。", "群聊语录")
         await save_img_cmd.send("上传功能目前仅支持群聊。")
 
 
 @make_record_cmd.handle()
-async def make_record_handle(
-    bot: Bot, event: MessageEvent, arp: Arparma, state: T_State
-):
+async def make_record_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_State):
     """记录语录处理函数"""
 
     qqid = None
@@ -251,11 +238,7 @@ async def make_record_handle(
     if event.reply:
         qqid = event.reply.sender.user_id
         raw_message = event.reply.message.extract_plain_text().strip()
-        card = (
-            event.reply.sender.card
-            if event.reply.sender.card
-            else event.reply.sender.nickname
-        )
+        card = event.reply.sender.card if event.reply.sender.card else event.reply.sender.nickname
     else:
         await make_record_cmd.finish("请回复所需的消息")
         return
@@ -284,9 +267,7 @@ async def make_record_handle(
                 save_to_file=False,
             )
 
-            duplicate_by_text = await QuoteService.check_duplicate_by_text(
-                group_id, recorded_text, str(qqid)
-            )
+            duplicate_by_text = await QuoteService.check_duplicate_by_text(group_id, recorded_text, str(qqid))
 
             if duplicate_by_text:
                 logger.info("发现重复文本，不保存新图片", "群聊语录")
@@ -326,9 +307,7 @@ async def make_record_handle(
                 save_to_file=False,
             )
             msg_to_send = MessageSegment.image(img_data)
-            await bot.send_private_msg(
-                user_id=int(event.get_user_id()), message=msg_to_send
-            )
+            await bot.send_private_msg(user_id=int(event.get_user_id()), message=msg_to_send)
     except NetworkError as e:
         await make_record_cmd.finish(str(e))
     except ImageProcessError as e:
@@ -339,9 +318,7 @@ async def make_record_handle(
 
 
 @render_quote_cmd.handle()
-async def render_quote_handle(
-    bot: Bot, event: MessageEvent, arp: Arparma, state: T_State
-):
+async def render_quote_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_State):
     """生成语录处理函数"""
 
     qqid = None
@@ -352,11 +329,7 @@ async def render_quote_handle(
     if event.reply:
         qqid = event.reply.sender.user_id
         raw_message = event.reply.message.extract_plain_text().strip()
-        card = (
-            event.reply.sender.card
-            if event.reply.sender.card
-            else event.reply.sender.nickname
-        )
+        card = event.reply.sender.card if event.reply.sender.card else event.reply.sender.nickname
     else:
         await render_quote_cmd.finish("请回复所需的消息")
         return
@@ -384,9 +357,7 @@ async def render_quote_handle(
         if group_id:
             await send_group_message(bot, group_id, msg_to_send)
         else:
-            await bot.send_private_msg(
-                user_id=int(event.get_user_id()), message=msg_to_send
-            )
+            await bot.send_private_msg(user_id=int(event.get_user_id()), message=msg_to_send)
     except NetworkError as e:
         await render_quote_cmd.finish(str(e))
     except ImageProcessError as e:
@@ -466,22 +437,14 @@ tags=aaa bbb ccc"""
 
         image_hash = await get_img_hash(save_file)
 
-        duplicate = await QuoteService.check_duplicate_by_hash(
-            target_group_id_str, image_hash
-        )
+        duplicate = await QuoteService.check_duplicate_by_hash(target_group_id_str, image_hash)
 
         if duplicate:
-            logger.info(
-                f"图片 {save_file} 已存在于群 {target_group_id_str} 的数据库中，跳过。"
-            )
-            await bot.send_msg(
-                group_id=int(group_id), message="上述图片已存在于目标语录库"
-            )
+            logger.info(f"图片 {save_file} 已存在于群 {target_group_id_str} 的数据库中，跳过。")
+            await bot.send_msg(group_id=int(group_id), message="上述图片已存在于目标语录库")
             continue
         else:
-            logger.info(
-                f"图片 {save_file} 不在群 {target_group_id_str} 的数据库中，继续处理。"
-            )
+            logger.info(f"图片 {save_file} 不在群 {target_group_id_str} 的数据库中，继续处理。")
 
         ocr_content = await OCRService.recognize_text(save_file)
 
@@ -496,23 +459,17 @@ tags=aaa bbb ccc"""
 
         if quote:
             if is_new:
-                logger.info(
-                    f"图片 {save_file} 已添加到群 {target_group_id_str} 的数据库中。"
-                )
+                logger.info(f"图片 {save_file} 已添加到群 {target_group_id_str} 的数据库中。")
 
                 if tags_list_parsed:
                     tag_list_for_image = tags_list_parsed[0].strip().split(" ")
                     success = await QuoteService.add_tags(quote, tag_list_for_image)
                     if success:
-                        logger.info(
-                            f"为图片 {save_file} 添加标签: {tag_list_for_image}"
-                        )
+                        logger.info(f"为图片 {save_file} 添加标签: {tag_list_for_image}")
                     else:
                         logger.warning(f"为图片 {save_file} 添加标签失败")
             else:
-                logger.warning(
-                    f"图片 {save_file} 已存在于群 {target_group_id_str} 的数据库中，跳过。"
-                )
+                logger.warning(f"图片 {save_file} 已存在于群 {target_group_id_str} 的数据库中，跳过。")
                 continue
         else:
             logger.error(f"图片 {save_file} 添加到数据库失败")
@@ -524,9 +481,7 @@ tags=aaa bbb ccc"""
 
         if idx % 10 == 0:
             logger.info(f"处理进度 {idx}/{total_len}")
-            await bot.send_msg(
-                group_id=int(group_id), message=f"当前进度{idx}/{total_len}"
-            )
+            await bot.send_msg(group_id=int(group_id), message=f"当前进度{idx}/{total_len}")
             await asyncio.sleep(1)
 
     await bot.send_msg(group_id=int(group_id), message="批量导入完成")
@@ -560,9 +515,7 @@ your_path=/home/xxx/images"""
         for quote in all_quotes:
             img_full_path = quote.image_path
             if not os.path.exists(img_full_path):
-                logger.warning(
-                    f"Source image {img_full_path} not found, skipping copy."
-                )
+                logger.warning(f"Source image {img_full_path} not found, skipping copy.")
                 continue
 
             img_basename = os.path.basename(img_full_path)
