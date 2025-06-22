@@ -77,6 +77,7 @@ __plugin_meta__ = PluginMetadata(
     【基础命令】
     - 语录：随机发送一条语录
     - 语录 [关键词]：搜索并发送包含关键词的语录
+    - 语录 [关键词1] [关键词2]：搜索包含所有关键词的语录(AND模式)
     - 语录 @用户：随机发送该用户的语录
     - 语录 @用户 [关键词]：搜索并发送该用户包含关键词的语录
     - 上传 [图片]：上传图片作为语录
@@ -104,7 +105,7 @@ __plugin_meta__ = PluginMetadata(
     supported_adapters={"~onebot.v11"},
     extra=PluginExtraData(
         author="webjoin111",
-        version="v0.4.4",
+        version="v0.4.5",
         admin_level=0,
         configs=[
             RegisterConfig(
