@@ -1,5 +1,6 @@
 from .exceptions import ImageProcessError, NetworkError, OCRError, ReplyImageNotFoundException
 from .image_utils import (
+    convert_image_to_png,
     copy_images_files,
     download_qq_avatar,
     get_img_hash,
@@ -22,6 +23,7 @@ __all__ = [
     "NetworkError",
     "OCRError",
     "ReplyImageNotFoundException",
+    "convert_image_to_png",
     "copy_images_files",
     "download_qq_avatar",
     "extract_image_basename_from_reply",

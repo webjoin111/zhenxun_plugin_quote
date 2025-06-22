@@ -1,4 +1,6 @@
+import os
 import random
+from pathlib import Path
 from typing import ClassVar
 
 import spacy_pkuseg as pkuseg
@@ -42,7 +44,9 @@ class QuoteService:
             )
 
             if image_hash:
-                existing_quote = await Quote.filter(group_id=group_id, image_hash=image_hash).first()
+                existing_quote = await Quote.filter(
+                    group_id=group_id, image_hash=image_hash
+                ).first()
 
                 if existing_quote:
                     logger.warning(
@@ -83,7 +87,9 @@ class QuoteService:
             )
 
             if created:
-                logger.info(f"语录添加成功 - ID: {quote.id}, 群组: {group_id}", "群聊语录")
+                logger.info(
+                    f"语录添加成功 - ID: {quote.id}, 群组: {group_id}", "群聊语录"
+                )
                 return quote, True
             else:
                 logger.warning(f"语录已存在 - 路径: {image_path}", "群聊语录")
@@ -94,13 +100,31 @@ class QuoteService:
 
     @staticmethod
     async def delete_quote(group_id: str, image_basename: str) -> bool:
-        """从数据库删除语录"""
+        """从数据库删除语录并删除对应的图片文件"""
         try:
-            logger.info(f"尝试删除语录 - 群组: {group_id}, 图片: {image_basename}", "群聊语录")
+            logger.info(
+                f"尝试删除语录 - 群组: {group_id}, 图片: {image_basename}", "群聊语录"
+            )
             quote = await QuoteService.find_quote_by_basename(group_id, image_basename)
             if quote:
+                image_path = quote.image_path
+                if os.path.exists(image_path):
+                    try:
+                        os.remove(image_path)
+                        logger.info(f"图片文件删除成功: {image_path}", "群聊语录")
+                    except Exception as file_error:
+                        logger.warning(
+                            f"删除图片文件失败: {image_path}, 错误: {file_error}",
+                            "群聊语录",
+                            e=file_error,
+                        )
+                else:
+                    logger.warning(f"图片文件不存在: {image_path}", "群聊语录")
+
                 await quote.delete()
-                logger.info(f"语录删除成功 - ID: {quote.id}, 群组: {group_id}", "群聊语录")
+                logger.info(
+                    f"语录删除成功 - ID: {quote.id}, 群组: {group_id}", "群聊语录"
+                )
                 return True
             else:
                 logger.warning(
@@ -113,7 +137,9 @@ class QuoteService:
             return False
 
     @classmethod
-    async def get_random_quote(cls, group_id: str, user_id_filter: str | None = None) -> Quote | None:
+    async def get_random_quote(
+        cls, group_id: str, user_id_filter: str | None = None
+    ) -> Quote | None:
         """随机获取一条语录，可根据用户筛选，并避免短时间内重复展示"""
         try:
             logger.info(
@@ -150,7 +176,11 @@ class QuoteService:
                         f"最近展示过的语录ID ({memory_key}): {recent_ids}，将避免重复",
                         "群聊语录",
                     )
-                    quotes = await Quote.filter(**query_filters).exclude(id__in=recent_ids).all()
+                    quotes = (
+                        await Quote.filter(**query_filters)
+                        .exclude(id__in=recent_ids)
+                        .all()
+                    )
                     if not quotes:
                         logger.warning(
                             f"所有语录 ({memory_key}) 都已展示过，将重置记忆",
@@ -194,8 +224,18 @@ class QuoteService:
             f"开始搜索语录 - 群组: {group_id}, 关键词: {keyword}, 用户筛选: {user_id_filter}",
             "群聊语录",
         )
-        keyword_lower = keyword.lower()
         memory_key = f"{group_id}_{user_id_filter or 'all'}"
+
+        keywords = [k.strip() for k in keyword.split() if k.strip()]
+        logger.info(f"搜索关键词列表: {keywords}", "群聊语录")
+        is_and_mode = len(keywords) > 1
+
+        if is_and_mode:
+            logger.info(f"检测到AND模式搜索，关键词列表: {keywords}", "群聊语录")
+        else:
+            keywords = [keyword]
+
+        keywords_lower = [k.lower() for k in keywords]
 
         try:
             base_query_filters = {"group_id": group_id}
@@ -212,75 +252,226 @@ class QuoteService:
 
             all_matches = set()
 
-            query_condition_text = Q(ocr_text__icontains=keyword) | Q(recorded_text__icontains=keyword)
-            partial_text_matches = await Quote.filter(**base_query_filters).filter(query_condition_text).all()
-            if partial_text_matches:
-                logger.info(f"找到部分文本匹配的语录 {len(partial_text_matches)} 条", "群聊语录")
-                for quote in partial_text_matches:
-                    all_matches.add(quote)
-
-            quotes_with_tags_query = Quote.filter(**base_query_filters)
-            quotes_with_tags = await quotes_with_tags_query.values("id", "tags")
-            partial_tag_match_ids = [
-                quote["id"]
-                for quote in quotes_with_tags
-                if any(keyword_lower in tag.lower() for tag in quote["tags"])
-            ]
-            if partial_tag_match_ids:
-                new_tag_match_ids = [
-                    id for id in partial_tag_match_ids if id not in [q.id for q in all_matches]
-                ]
-                if new_tag_match_ids:
-                    partial_tag_matches = await Quote.filter(id__in=new_tag_match_ids).all()
-                    logger.info(f"找到部分标签匹配的语录 {len(partial_tag_matches)} 条", "群聊语录")
-                    for quote in partial_tag_matches:
+            if not is_and_mode:
+                query_condition_text = Q(ocr_text__icontains=keywords[0]) | Q(
+                    recorded_text__icontains=keywords[0]
+                )
+                partial_text_matches = (
+                    await Quote.filter(**base_query_filters)
+                    .filter(query_condition_text)
+                    .all()
+                )
+                if partial_text_matches:
+                    logger.info(
+                        f"找到部分文本匹配的语录 {len(partial_text_matches)} 条",
+                        "群聊语录",
+                    )
+                    for quote in partial_text_matches:
                         all_matches.add(quote)
 
+                quotes_with_tags_query = Quote.filter(**base_query_filters)
+                quotes_with_tags = await quotes_with_tags_query.values("id", "tags")
+                partial_tag_match_ids = [
+                    quote["id"]
+                    for quote in quotes_with_tags
+                    if any(keywords_lower[0] in tag.lower() for tag in quote["tags"])
+                ]
+                if partial_tag_match_ids:
+                    new_tag_match_ids = [
+                        id
+                        for id in partial_tag_match_ids
+                        if id not in [q.id for q in all_matches]
+                    ]
+                    if new_tag_match_ids:
+                        partial_tag_matches = await Quote.filter(
+                            id__in=new_tag_match_ids
+                        ).all()
+                        logger.info(
+                            f"找到部分标签匹配的语录 {len(partial_tag_matches)} 条",
+                            "群聊语录",
+                        )
+                        for quote in partial_tag_matches:
+                            all_matches.add(quote)
+            else:
+                for i, kw in enumerate(keywords):
+                    kw_lower = keywords_lower[i]
+                    query_condition = Q(ocr_text__icontains=kw) | Q(
+                        recorded_text__icontains=kw
+                    )
+
+                    if i == 0:
+                        matches = (
+                            await Quote.filter(**base_query_filters)
+                            .filter(query_condition)
+                            .all()
+                        )
+                        all_matches = set(matches)
+
+                        quotes_with_tags = await Quote.filter(
+                            **base_query_filters
+                        ).values("id", "tags")
+                        tag_matches = {
+                            quote["id"]
+                            for quote in quotes_with_tags
+                            if any(kw_lower in tag.lower() for tag in quote["tags"])
+                        }
+                        if tag_matches:
+                            tag_quotes = await Quote.filter(id__in=tag_matches).all()
+                            for quote in tag_quotes:
+                                all_matches.add(quote)
+                    else:
+                        if not all_matches:
+                            break
+
+                        current_matches = (
+                            await Quote.filter(**base_query_filters)
+                            .filter(query_condition)
+                            .all()
+                        )
+                        current_matches_set = set(current_matches)
+
+                        tag_matches = {
+                            quote["id"]
+                            for quote in quotes_with_tags
+                            if any(kw_lower in tag.lower() for tag in quote["tags"])
+                        }
+                        if tag_matches:
+                            tag_quotes = await Quote.filter(id__in=tag_matches).all()
+                            current_matches_set.update(tag_quotes)
+
+                        all_matches = {
+                            q
+                            for q in all_matches
+                            if q.id in {m.id for m in current_matches_set}
+                        }
+
+                logger.info(
+                    f"AND模式搜索找到 {len(all_matches)} 条匹配的语录", "群聊语录"
+                )
+
             if not all_matches:
-                keyword_tokens = QuoteService.cut_sentence(keyword)
-                if not keyword_tokens:
+                all_tokens = []
+                for kw in keywords:
+                    tokens = QuoteService.cut_sentence(kw)
+                    if tokens:
+                        all_tokens.append(tokens)
+                    else:
+                        all_tokens.append([kw])
+
+                if not all_tokens:
                     logger.info(
                         f"分词结果为空，(用户: {user_id_filter or '任意'}) 中未找到与 '{keyword}' 相关的语录。",
                         "群聊语录",
                     )
                     return None
 
-                logger.debug(f"搜索关键词分词结果: {keyword_tokens}", "群聊语录")
+                logger.debug(f"搜索关键词分词结果: {all_tokens}", "群聊语录")
 
-                token_queries = []
-                for token in keyword_tokens:
-                    token_lower = token.lower()
-                    token_queries.append(
-                        Q(ocr_text__icontains=token_lower) | Q(recorded_text__icontains=token_lower)
-                    )
+                quotes_with_tags = await Quote.filter(**base_query_filters).values(
+                    "id", "tags"
+                )
 
-                token_query = token_queries[0]
-                for query_part in token_queries[1:]:
-                    token_query = token_query | query_part
-
-                token_text_matches = await Quote.filter(**base_query_filters).filter(token_query).all()
-                for quote in token_text_matches:
-                    all_matches.add(quote)
-
-                token_tag_match_ids = []
-                for quote_tags_data in quotes_with_tags:
-                    if quote_tags_data["id"] in [q.id for q in all_matches]:
-                        continue
-                    for token in keyword_tokens:
+                if not is_and_mode:
+                    token_queries = []
+                    for token in all_tokens[0]:
                         token_lower = token.lower()
-                        if any(token_lower in tag.lower() for tag in quote_tags_data["tags"]):
-                            token_tag_match_ids.append(quote_tags_data["id"])
-                            break
+                        token_queries.append(
+                            Q(ocr_text__icontains=token_lower)
+                            | Q(recorded_text__icontains=token_lower)
+                        )
 
-                if token_tag_match_ids:
-                    token_tag_matches = await Quote.filter(id__in=token_tag_match_ids).all()
-                    for quote in token_tag_matches:
+                    token_query = token_queries[0]
+                    for query_part in token_queries[1:]:
+                        token_query = token_query | query_part
+
+                    token_text_matches = (
+                        await Quote.filter(**base_query_filters)
+                        .filter(token_query)
+                        .all()
+                    )
+                    for quote in token_text_matches:
                         all_matches.add(quote)
+
+                    token_tag_match_ids = []
+                    for quote_tags_data in quotes_with_tags:
+                        if quote_tags_data["id"] in [q.id for q in all_matches]:
+                            continue
+                        for token in all_tokens[0]:
+                            token_lower = token.lower()
+                            if any(
+                                token_lower in tag.lower()
+                                for tag in quote_tags_data["tags"]
+                            ):
+                                token_tag_match_ids.append(quote_tags_data["id"])
+                                break
+
+                    if token_tag_match_ids:
+                        token_tag_matches = await Quote.filter(
+                            id__in=token_tag_match_ids
+                        ).all()
+                        for quote in token_tag_matches:
+                            all_matches.add(quote)
+                else:
+                    for i, tokens in enumerate(all_tokens):
+                        token_queries = []
+                        for token in tokens:
+                            token_lower = token.lower()
+                            token_queries.append(
+                                Q(ocr_text__icontains=token_lower)
+                                | Q(recorded_text__icontains=token_lower)
+                            )
+
+                        if token_queries:
+                            current_query = token_queries[0]
+                            for query_part in token_queries[1:]:
+                                current_query = current_query | query_part
+
+                            current_matches = (
+                                await Quote.filter(**base_query_filters)
+                                .filter(current_query)
+                                .all()
+                            )
+                            current_matches_set = set(current_matches)
+
+                            current_tag_match_ids = []
+                            for quote_tags_data in quotes_with_tags:
+                                for token in tokens:
+                                    token_lower = token.lower()
+                                    if any(
+                                        token_lower in tag.lower()
+                                        for tag in quote_tags_data["tags"]
+                                    ):
+                                        current_tag_match_ids.append(
+                                            quote_tags_data["id"]
+                                        )
+                                        break
+
+                            if current_tag_match_ids:
+                                tag_quotes = await Quote.filter(
+                                    id__in=current_tag_match_ids
+                                ).all()
+                                current_matches_set.update(tag_quotes)
+
+                            if i == 0:
+                                all_matches = current_matches_set
+                            else:
+                                all_matches = {
+                                    q
+                                    for q in all_matches
+                                    if q.id in {m.id for m in current_matches_set}
+                                }
+
+                            if not all_matches:
+                                break
 
             if all_matches:
                 all_matches_list = list(all_matches)
-                logger.info(f"总共找到匹配的语录 {len(all_matches_list)} 条", "群聊语录")
-                random_quote = cls._select_and_record_quote(memory_key, all_matches_list)
+                logger.info(
+                    f"总共找到匹配的语录 {len(all_matches_list)} 条", "群聊语录"
+                )
+                random_quote = cls._select_and_record_quote(
+                    memory_key, all_matches_list
+                )
                 logger.info(
                     f"搜索到语录 ID: {random_quote.id} (路径: {random_quote.image_path})",
                     "群聊语录",
@@ -301,7 +492,9 @@ class QuoteService:
             return None
 
     @staticmethod
-    async def find_quote_by_basename(group_id: str, image_basename: str) -> Quote | None:
+    async def find_quote_by_basename(
+        group_id: str, image_basename: str
+    ) -> Quote | None:
         """根据图片文件名查找语录"""
         try:
             logger.info(
@@ -309,7 +502,9 @@ class QuoteService:
                 "群聊语录",
             )
 
-            quote = await Quote.filter(group_id=group_id, image_path__contains=image_basename).first()
+            quote = await Quote.filter(
+                group_id=group_id, image_path__contains=image_basename
+            ).first()
 
             if quote:
                 logger.info(
@@ -335,9 +530,13 @@ class QuoteService:
             if not image_hash:
                 return None
 
-            logger.info(f"检查重复图片 - 群组: {group_id}, 哈希值: {image_hash}", "群聊语录")
+            logger.info(
+                f"检查重复图片 - 群组: {group_id}, 哈希值: {image_hash}", "群聊语录"
+            )
 
-            existing_quote = await Quote.filter(group_id=group_id, image_hash=image_hash).first()
+            existing_quote = await Quote.filter(
+                group_id=group_id, image_hash=image_hash
+            ).first()
 
             if existing_quote:
                 logger.warning(
@@ -356,7 +555,9 @@ class QuoteService:
             return None
 
     @staticmethod
-    async def check_duplicate_by_text(group_id: str, recorded_text: str, quoted_user_id: str) -> Quote | None:
+    async def check_duplicate_by_text(
+        group_id: str, recorded_text: str, quoted_user_id: str
+    ) -> Quote | None:
         """检查文本和用户是否重复"""
         try:
             if not recorded_text or not quoted_user_id:
@@ -419,7 +620,9 @@ class QuoteService:
             )
             return True
         except Exception as e:
-            logger.error(f"为语录添加标签失败 - 语录 ID: {quote.id}, 错误: {e}", "群聊语录", e=e)
+            logger.error(
+                f"为语录添加标签失败 - 语录 ID: {quote.id}, 错误: {e}", "群聊语录", e=e
+            )
             return False
 
     @staticmethod
@@ -440,7 +643,9 @@ class QuoteService:
             )
             return True
         except Exception as e:
-            logger.error(f"删除语录标签失败 - 语录 ID: {quote.id}, 错误: {e}", "群聊语录", e=e)
+            logger.error(
+                f"删除语录标签失败 - 语录 ID: {quote.id}, 错误: {e}", "群聊语录", e=e
+            )
             return False
 
     @classmethod
@@ -476,7 +681,16 @@ class QuoteService:
             f"开始搜索语录用于删除 - 群组: {group_id}, 关键词: {keyword}, 用户筛选: {user_id_filter}",
             "群聊语录",
         )
-        keyword_lower = keyword.lower()
+
+        keywords = [k.strip() for k in keyword.split() if k.strip()]
+        is_and_mode = len(keywords) > 1
+
+        if is_and_mode:
+            logger.info(f"检测到AND模式搜索，关键词列表: {keywords}", "群聊语录")
+        else:
+            keywords = [keyword]
+
+        keywords_lower = [k.lower() for k in keywords]
         matched_quotes_set = set()
 
         try:
@@ -492,40 +706,126 @@ class QuoteService:
                 )
                 return []
 
-            query_condition_text = Q(ocr_text__icontains=keyword) | Q(recorded_text__icontains=keyword)
-            text_matches = await Quote.filter(**base_query_filters).filter(query_condition_text).all()
-            for q in text_matches:
-                matched_quotes_set.add(q)
+            if not is_and_mode:
+                query_condition_text = Q(ocr_text__icontains=keywords[0]) | Q(
+                    recorded_text__icontains=keywords[0]
+                )
+                text_matches = (
+                    await Quote.filter(**base_query_filters)
+                    .filter(query_condition_text)
+                    .all()
+                )
+                for q in text_matches:
+                    matched_quotes_set.add(q)
 
-            quotes_with_tags_query = Quote.filter(**base_query_filters)
-            quotes_with_tags = await quotes_with_tags_query.values("id", "tags")
-            tag_match_ids = {
-                quote["id"]
-                for quote in quotes_with_tags
-                if any(keyword_lower in tag.lower() for tag in quote["tags"])
-            }
-            if tag_match_ids:
-                new_tag_match_ids = tag_match_ids - {q.id for q in matched_quotes_set}
-                if new_tag_match_ids:
-                    tag_matches = await Quote.filter(id__in=new_tag_match_ids).all()
-                    for q in tag_matches:
-                        matched_quotes_set.add(q)
+                quotes_with_tags_query = Quote.filter(**base_query_filters)
+                quotes_with_tags = await quotes_with_tags_query.values("id", "tags")
+                tag_match_ids = {
+                    quote["id"]
+                    for quote in quotes_with_tags
+                    if any(keywords_lower[0] in tag.lower() for tag in quote["tags"])
+                }
+                if tag_match_ids:
+                    new_tag_match_ids = tag_match_ids - {
+                        q.id for q in matched_quotes_set
+                    }
+                    if new_tag_match_ids:
+                        tag_matches = await Quote.filter(id__in=new_tag_match_ids).all()
+                        for q in tag_matches:
+                            matched_quotes_set.add(q)
+            else:
+                quotes_with_tags = await Quote.filter(**base_query_filters).values(
+                    "id", "tags"
+                )
+
+                for i, kw in enumerate(keywords):
+                    kw_lower = keywords_lower[i]
+                    query_condition = Q(ocr_text__icontains=kw) | Q(
+                        recorded_text__icontains=kw
+                    )
+
+                    if i == 0:
+                        matches = (
+                            await Quote.filter(**base_query_filters)
+                            .filter(query_condition)
+                            .all()
+                        )
+                        matched_quotes_set = set(matches)
+
+                        tag_matches = {
+                            quote["id"]
+                            for quote in quotes_with_tags
+                            if any(kw_lower in tag.lower() for tag in quote["tags"])
+                        }
+                        if tag_matches:
+                            tag_quotes = await Quote.filter(id__in=tag_matches).all()
+                            for quote in tag_quotes:
+                                matched_quotes_set.add(quote)
+                    else:
+                        if not matched_quotes_set:
+                            break
+
+                        current_matches = (
+                            await Quote.filter(**base_query_filters)
+                            .filter(query_condition)
+                            .all()
+                        )
+                        current_matches_set = set(current_matches)
+
+                        tag_matches = {
+                            quote["id"]
+                            for quote in quotes_with_tags
+                            if any(kw_lower in tag.lower() for tag in quote["tags"])
+                        }
+                        if tag_matches:
+                            tag_quotes = await Quote.filter(id__in=tag_matches).all()
+                            current_matches_set.update(tag_quotes)
+
+                        matched_quotes_set = {
+                            q
+                            for q in matched_quotes_set
+                            if q.id in {m.id for m in current_matches_set}
+                        }
+
+                logger.info(
+                    f"AND模式搜索找到 {len(matched_quotes_set)} 条匹配的语录",
+                    "群聊语录",
+                )
 
             if not matched_quotes_set:
-                keyword_tokens = cls.cut_sentence(keyword)
-                if keyword_tokens:
+                all_tokens = []
+                for kw in keywords:
+                    tokens = cls.cut_sentence(kw)
+                    if tokens:
+                        all_tokens.append(tokens)
+                    else:
+                        all_tokens.append([kw])
+
+                if not all_tokens:
+                    logger.info(
+                        f"分词结果为空，(用户: {user_id_filter or '任意'}) 中未找到与 '{keyword}' 相关的语录。",
+                        "群聊语录",
+                    )
+                    return []
+
+                logger.debug(f"搜索关键词分词结果: {all_tokens}", "群聊语录")
+
+                if not is_and_mode:
                     token_queries_text = []
-                    for token in keyword_tokens:
+                    for token in all_tokens[0]:
                         token_lower = token.lower()
                         token_queries_text.append(
-                            Q(ocr_text__icontains=token_lower) | Q(recorded_text__icontains=token_lower)
+                            Q(ocr_text__icontains=token_lower)
+                            | Q(recorded_text__icontains=token_lower)
                         )
                     if token_queries_text:
                         final_token_query_text = token_queries_text[0]
                         for tq in token_queries_text[1:]:
                             final_token_query_text |= tq
                         token_text_matches_qs = (
-                            await Quote.filter(**base_query_filters).filter(final_token_query_text).all()
+                            await Quote.filter(**base_query_filters)
+                            .filter(final_token_query_text)
+                            .all()
                         )
                         for q in token_text_matches_qs:
                             matched_quotes_set.add(q)
@@ -534,17 +834,76 @@ class QuoteService:
                     for quote_tags_data in quotes_with_tags:
                         if quote_tags_data["id"] in {q.id for q in matched_quotes_set}:
                             continue
-                        for token in keyword_tokens:
+                        for token in all_tokens[0]:
                             token_lower = token.lower()
-                            if any(token_lower in tag.lower() for tag in quote_tags_data["tags"]):
+                            if any(
+                                token_lower in tag.lower()
+                                for tag in quote_tags_data["tags"]
+                            ):
                                 token_tag_match_ids_token.add(quote_tags_data["id"])
                                 break
                     if token_tag_match_ids_token:
-                        new_token_tag_ids = token_tag_match_ids_token - {q.id for q in matched_quotes_set}
+                        new_token_tag_ids = token_tag_match_ids_token - {
+                            q.id for q in matched_quotes_set
+                        }
                         if new_token_tag_ids:
-                            token_tag_matches_qs = await Quote.filter(id__in=new_token_tag_ids).all()
+                            token_tag_matches_qs = await Quote.filter(
+                                id__in=new_token_tag_ids
+                            ).all()
                             for q in token_tag_matches_qs:
                                 matched_quotes_set.add(q)
+                else:
+                    for i, tokens in enumerate(all_tokens):
+                        token_queries = []
+                        for token in tokens:
+                            token_lower = token.lower()
+                            token_queries.append(
+                                Q(ocr_text__icontains=token_lower)
+                                | Q(recorded_text__icontains=token_lower)
+                            )
+
+                        if token_queries:
+                            current_query = token_queries[0]
+                            for query_part in token_queries[1:]:
+                                current_query = current_query | query_part
+
+                            current_matches = (
+                                await Quote.filter(**base_query_filters)
+                                .filter(current_query)
+                                .all()
+                            )
+                            current_matches_set = set(current_matches)
+
+                            current_tag_match_ids = []
+                            for quote_tags_data in quotes_with_tags:
+                                for token in tokens:
+                                    token_lower = token.lower()
+                                    if any(
+                                        token_lower in tag.lower()
+                                        for tag in quote_tags_data["tags"]
+                                    ):
+                                        current_tag_match_ids.append(
+                                            quote_tags_data["id"]
+                                        )
+                                        break
+
+                            if current_tag_match_ids:
+                                tag_quotes = await Quote.filter(
+                                    id__in=current_tag_match_ids
+                                ).all()
+                                current_matches_set.update(tag_quotes)
+
+                            if i == 0:
+                                matched_quotes_set = current_matches_set
+                            else:
+                                matched_quotes_set = {
+                                    q
+                                    for q in matched_quotes_set
+                                    if q.id in {m.id for m in current_matches_set}
+                                }
+
+                            if not matched_quotes_set:
+                                break
 
             final_matched_quotes = list(matched_quotes_set)
             logger.info(
@@ -574,7 +933,6 @@ class QuoteService:
         """生成临时语录图片"""
         try:
             import hashlib
-            import os
 
             import aiofiles
 
@@ -598,9 +956,12 @@ class QuoteService:
 
                 image_name = hashlib.md5(img_data).hexdigest() + ".png"
                 if save_path:
-                    image_path = save_path
+                    image_path = Path(save_path)
                 else:
-                    image_path = os.path.abspath(os.path.join(quote_path, image_name))
+                    from ..config import ensure_quote_path
+
+                    ensure_quote_path()
+                    image_path = quote_path / image_name
 
                 async with aiofiles.open(image_path, "wb") as file:
                     await file.write(img_data)
@@ -620,9 +981,13 @@ class QuoteService:
             if quote:
                 quote.view_count += 1
                 await quote.save(update_fields=["view_count"])
-                logger.debug(f"语录ID {quote_id} 查看次数增加到 {quote.view_count}", "群聊语录")
+                logger.debug(
+                    f"语录ID {quote_id} 查看次数增加到 {quote.view_count}", "群聊语录"
+                )
         except Exception as e:
-            logger.error(f"增加语录查看次数失败 - ID: {quote_id}, 错误: {e}", "群聊语录", e=e)
+            logger.error(
+                f"增加语录查看次数失败 - ID: {quote_id}, 错误: {e}", "群聊语录", e=e
+            )
 
     @staticmethod
     async def get_hottest_quotes(group_id: str, limit: int = 10) -> list[Quote]:
@@ -630,7 +995,12 @@ class QuoteService:
         logger.debug(f"开始获取群组 {group_id} 最热门语录，数量: {limit}", "群聊语录")
 
         try:
-            hottest_quotes = await Quote.filter(group_id=group_id).order_by("-view_count").limit(limit).all()
+            hottest_quotes = (
+                await Quote.filter(group_id=group_id)
+                .order_by("-view_count")
+                .limit(limit)
+                .all()
+            )
 
             logger.debug(
                 f"成功获取群组 {group_id} 热门语录，共 {len(hottest_quotes)} 条",
@@ -640,7 +1010,9 @@ class QuoteService:
             for i, quote in enumerate(hottest_quotes):
                 quote_type = (
                     "图片语录"
-                    if (quote.image_path and not (quote.ocr_text or quote.recorded_text))
+                    if (
+                        quote.image_path and not (quote.ocr_text or quote.recorded_text)
+                    )
                     else "文本语录"
                 )
                 logger.debug(
@@ -739,7 +1111,9 @@ class QuoteService:
             max_preview_lines = 3
             max_preview_width = text_area_width - 20
 
-            def truncate_text_to_fit(text: str, max_width: int, max_lines: int, font) -> str:
+            def truncate_text_to_fit(
+                text: str, max_width: int, max_lines: int, font
+            ) -> str:
                 """根据宽度和行数限制截断文本"""
                 if not text:
                     return text
@@ -781,18 +1155,24 @@ class QuoteService:
                 if len(actual_lines) > max_preview_lines:
                     preview_text = "\n".join(actual_lines[:max_preview_lines]) + "..."
                 elif len(preview_text) > chars_per_line * max_preview_lines:
-                    preview_text = preview_text[: chars_per_line * max_preview_lines - 10] + "..."
+                    preview_text = (
+                        preview_text[: chars_per_line * max_preview_lines - 10] + "..."
+                    )
 
             avatar_img = None
             if quote.quoted_user_id:
                 try:
-                    avatar_data = await PlatformUtils.get_user_avatar(quote.quoted_user_id, "qq", bot_self_id)
+                    avatar_data = await PlatformUtils.get_user_avatar(
+                        quote.quoted_user_id, "qq", bot_self_id
+                    )
                     if avatar_data:
                         avatar_img = BuildImage.open(avatar_data)
                         await avatar_img.resize(width=avatar_size, height=avatar_size)
                         await avatar_img.circle()
                 except Exception as e:
-                    logger.warning(f"获取用户 {quote.quoted_user_id} 头像失败: {e}", "群聊语录")
+                    logger.warning(
+                        f"获取用户 {quote.quoted_user_id} 头像失败: {e}", "群聊语录"
+                    )
 
             if not avatar_img:
                 avatar_img = BuildImage(avatar_size, avatar_size, color=(200, 200, 200))
@@ -808,7 +1188,9 @@ class QuoteService:
             try:
                 id_text_h = BuildImage.get_text_size(f"ID: {quote.id}", id_font)[1]
                 rank_text_h = BuildImage.get_text_size(f"No.{rank}", title_font)[1]
-                count_text_h = BuildImage.get_text_size(f"查看: {quote.view_count}", count_font)[1]
+                count_text_h = BuildImage.get_text_size(
+                    f"查看: {quote.view_count}", count_font
+                )[1]
             except Exception as e:
                 logger.warning(f"获取文本尺寸失败，使用默认值: {e}", "群聊语录")
                 id_text_h = 18
@@ -837,7 +1219,9 @@ class QuoteService:
                 min_image_height = 120
                 if preview_text_img_h < min_image_height:
                     preview_text_img_h = min_image_height
-                    logger.debug(f"图片语录高度调整为最小值: {min_image_height}px", "群聊语录")
+                    logger.debug(
+                        f"图片语录高度调整为最小值: {min_image_height}px", "群聊语录"
+                    )
 
             card_height = (
                 card_padding * 4
@@ -933,7 +1317,9 @@ class QuoteService:
                             padding=10,
                         )
                     except Exception as text_error:
-                        logger.warning(f"生成图片语录文本预览失败: {text_error}", "群聊语录")
+                        logger.warning(
+                            f"生成图片语录文本预览失败: {text_error}", "群聊语录"
+                        )
                         preview_img = BuildImage(
                             text_area_width,
                             int(preview_text_img_h),
@@ -948,7 +1334,9 @@ class QuoteService:
                                 center_type="center",
                             )
                         except Exception as text_error:
-                            logger.warning(f"绘制图片语录文本失败: {text_error}", "群聊语录")
+                            logger.warning(
+                                f"绘制图片语录文本失败: {text_error}", "群聊语录"
+                            )
                             pass
             else:
                 try:
@@ -963,10 +1351,14 @@ class QuoteService:
                     )
 
                     if preview_img.width > text_area_width:
-                        await preview_img.crop((0, 0, text_area_width, preview_img.height))
+                        await preview_img.crop(
+                            (0, 0, text_area_width, preview_img.height)
+                        )
                 except Exception as e:
                     logger.warning(f"使用 text2image 生成预览图片失败: {e}", "群聊语录")
-                    preview_img = BuildImage(text_area_width, int(preview_text_img_h), color=(245, 245, 245))
+                    preview_img = BuildImage(
+                        text_area_width, int(preview_text_img_h), color=(245, 245, 245)
+                    )
                     try:
                         await preview_img.text(
                             (0, 0),
@@ -986,12 +1378,16 @@ class QuoteService:
                     paste_x = preview_x + (text_area_width - preview_img.width) // 2
 
                 if preview_img.height < preview_text_img_h:
-                    paste_y = preview_y + (int(preview_text_img_h) - preview_img.height) // 2
+                    paste_y = (
+                        preview_y + (int(preview_text_img_h) - preview_img.height) // 2
+                    )
 
             await card.paste(preview_img, (paste_x, paste_y))
 
             view_count_text = f"查看: {quote.view_count}次"
-            view_count_w, view_count_h = BuildImage.get_text_size(view_count_text, count_font)
+            view_count_w, view_count_h = BuildImage.get_text_size(
+                view_count_text, count_font
+            )
             view_count_x = card_width - card_padding - view_count_w
             view_count_y = card_height - card_padding - view_count_h
             await card.text(
@@ -1019,7 +1415,9 @@ class QuoteService:
         overall_title_font = BuildImage.load_font(get_font_path(), 40)
 
         try:
-            _, title_h = BuildImage.get_text_size(overall_title_text, overall_title_font)
+            _, title_h = BuildImage.get_text_size(
+                overall_title_text, overall_title_font
+            )
         except Exception as e:
             logger.warning(f"获取标题尺寸失败，使用默认值: {e}", "群聊语录")
             title_h = 50
@@ -1074,7 +1472,9 @@ class QuoteService:
         if not data:
             return f"{title_prefix}数据为空"
 
-        user_ids = [item.get("uploader_user_id") or item.get("quoted_user_id") for item in data]
+        user_ids = [
+            item.get("uploader_user_id") or item.get("quoted_user_id") for item in data
+        ]
         counts = [item.get("upload_count") or item.get("quote_count") for item in data]
 
         user_names = []
@@ -1082,8 +1482,12 @@ class QuoteService:
             if not uid:
                 user_names.append("未知用户")
                 continue
-            user_info = await GroupInfoUser.get_or_none(group_id=group_id, user_id=str(uid))
-            user_names.append(user_info.user_name if user_info and user_info.user_name else str(uid))
+            user_info = await GroupInfoUser.get_or_none(
+                group_id=group_id, user_id=str(uid)
+            )
+            user_names.append(
+                user_info.user_name if user_info and user_info.user_name else str(uid)
+            )
 
         user_names.reverse()
         counts.reverse()
@@ -1183,7 +1587,11 @@ class QuoteService:
             "这",
         }
 
-        new_words = [word for word in cut_words if word not in remove_set and len(word.strip()) > 0]
+        new_words = [
+            word
+            for word in cut_words
+            if word not in remove_set and len(word.strip()) > 0
+        ]
 
         if len(text) <= 10:
             if text.strip() and text.strip() not in remove_set:

@@ -1,5 +1,3 @@
-import os
-
 from nonebot import get_driver
 from nonebot.plugin import PluginMetadata
 
@@ -23,9 +21,9 @@ from .command.upload_commands import (  # noqa: F401
     save_img_cmd,
     script_batch_cmd,
 )
-from .config import quote_path
+from .config import ensure_quote_path
 
-os.makedirs(quote_path, exist_ok=True)
+ensure_quote_path()
 driver = get_driver()
 
 
@@ -157,6 +155,13 @@ __plugin_meta__ = PluginMetadata(
                 key="AUTHOR_FONT_NAME",
                 value="",
                 help="作者字体名称（位于FONT_PATH目录下，留空则使用第一个可用字体）",
+                default_value="",
+            ),
+            RegisterConfig(
+                module="quote",
+                key="QUOTE_PATH",
+                value="",
+                help="语录图片保存路径（留空则使用默认路径：DATA_PATH/quote/images）",
                 default_value="",
             ),
         ],

@@ -16,7 +16,9 @@ from ..services.quote_service import QuoteService
 from ..utils.message_utils import reply_handle
 
 delete_quote_alc = Alconna("删除")
-delete_record = on_alconna(delete_quote_alc, aliases={"delete"}, permission=SUPERUSER, block=True)
+delete_record = on_alconna(
+    delete_quote_alc, aliases={"delete"}, permission=SUPERUSER, block=True
+)
 
 addtag_alc = Alconna("addtag", Args["tags", MultiVar(str)])
 addtag_cmd = on_alconna(addtag_alc, rule=admin_check(5), block=True)
@@ -26,10 +28,12 @@ deltag_cmd = on_alconna(deltag_alc, rule=admin_check(5), block=True)
 
 delete_by_keyword_alc = Alconna(
     "删除关键词",
-    Args["target_user?", At]["keyword", str],
+    Args["target_user?", At]["keywords?", MultiVar(str)],
     Option("-g", Args["group_id", str], help_text="指定群组ID"),
 )
-delete_by_keyword_cmd = on_alconna(delete_by_keyword_alc, permission=SUPERUSER, block=True)
+delete_by_keyword_cmd = on_alconna(
+    delete_by_keyword_alc, permission=SUPERUSER, block=True
+)
 
 
 @delete_record.handle()
@@ -134,7 +138,15 @@ async def deltag_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_St
 @delete_by_keyword_cmd.handle()
 async def delete_by_keyword_handle(bot: Bot, event: MessageEvent, arp: Arparma):
     """根据关键词删除语录处理函数"""
-    keyword = arp.query("keyword", "")
+    keywords: list[str] = arp.all_matched_args.get("keywords", [])
+
+    keyword = ""
+    if keywords:
+        keyword = " ".join(keywords)
+        logger.debug(f"从MultiVar获取到的关键词列表: {keywords}", "群聊语录")
+
+    logger.debug(f"处理后的关键词: '{keyword}'", "群聊语录")
+
     if not keyword:
         await delete_by_keyword_cmd.finish("请提供要删除的关键词")
         return
@@ -184,7 +196,9 @@ async def delete_by_keyword_handle(bot: Bot, event: MessageEvent, arp: Arparma):
             f"用户 {quoted_user_id_to_delete} 的" if quoted_user_id_to_delete else ""
         )
         message_text = f"未找到{user_spec}与关键词 '{keyword}' 相关的语录"
-        await MessageUtils.build_message(message_text).send(target=target_for_reply, bot=bot)
+        await MessageUtils.build_message(message_text).send(
+            target=target_for_reply, bot=bot
+        )
         return
 
     count = len(matched_quotes)
@@ -220,11 +234,15 @@ async def delete_by_keyword_handle(bot: Bot, event: MessageEvent, arp: Arparma):
         reply_text = await check_confirm.wait(timeout=30)
 
         if reply_text is None:
-            await MessageUtils.build_message("确认超时，已取消删除操作").send(target=target_for_reply, bot=bot)
+            await MessageUtils.build_message("确认超时，已取消删除操作").send(
+                target=target_for_reply, bot=bot
+            )
             return
 
         if reply_text != "是":
-            await MessageUtils.build_message("已取消删除操作").send(target=target_for_reply, bot=bot)
+            await MessageUtils.build_message("已取消删除操作").send(
+                target=target_for_reply, bot=bot
+            )
             return
 
         deleted_count = 0
@@ -248,7 +266,11 @@ async def delete_by_keyword_handle(bot: Bot, event: MessageEvent, arp: Arparma):
                 failed_count += 1
 
         result_msg = f"{'[远程操作] ' if is_remote else ''}群 {group_id_for_search} 中{user_confirm_spec}的语录删除完成，成功: {deleted_count}，失败: {failed_count}"
-        await MessageUtils.build_message(result_msg).send(target=target_for_reply, bot=bot)
+        await MessageUtils.build_message(result_msg).send(
+            target=target_for_reply, bot=bot
+        )
     except Exception as e:
         logger.error(f"删除语录过程中发生错误: {e}", "群聊语录", e=e)
-        await MessageUtils.build_message(f"删除过程中发生错误: {e}").send(target=target_for_reply, bot=bot)
+        await MessageUtils.build_message(f"删除过程中发生错误: {e}").send(
+            target=target_for_reply, bot=bot
+        )

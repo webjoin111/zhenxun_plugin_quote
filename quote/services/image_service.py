@@ -2,7 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
-import os
+from pathlib import Path
 import textwrap
 
 import aiofiles
@@ -12,7 +12,7 @@ from zhenxun.services.log import logger
 
 from ..config import get_author_font_path, get_font_path
 from ..pilmoji import Pilmoji
-from ..pilmoji.source import GoogleEmojiSource
+from ..pilmoji.source import RobustGoogleEmojiSource
 from ..utils.exceptions import ImageProcessError
 
 
@@ -77,10 +77,22 @@ class ImageService:
             font_size = 70
         elif text_length <= 100:
             font_size = 60
+        elif text_length <= 150:
+            font_size = 55
         elif text_length <= 200:
             font_size = 50
-        else:
+        elif text_length <= 300:
+            font_size = 45
+        elif text_length <= 400:
             font_size = 40
+        elif text_length <= 500:
+            font_size = 35
+        elif text_length <= 700:
+            font_size = 30
+        elif text_length <= 1000:
+            font_size = 25
+        else:
+            font_size = 20
 
         font = ImageFont.truetype(font_path, font_size)
 
@@ -118,14 +130,20 @@ class ImageService:
                 )
 
                 if (
-                    current_width <= max_text_width * 0.95
-                    and current_height <= max_text_height
+                    current_width <= max_text_width * 0.98
+                    and current_height <= max_text_height * 0.95
                 ):
                     break
 
-                font_size -= 2
-                if font_size < 20:
-                    font_size = 20
+                if font_size > 40:
+                    font_size -= 3
+                elif font_size > 25:
+                    font_size -= 2
+                else:
+                    font_size -= 1
+
+                if font_size < 12:
+                    font_size = 12
 
                 font = ImageFont.truetype(font_path, font_size)
 
@@ -148,7 +166,7 @@ class ImageService:
                     lines.append("".join(current_line))
                 wrapped_text = lines
 
-                if font_size <= 20:
+                if font_size <= 12:
                     break
 
         quote_content = "\n".join(wrapped_text)
@@ -169,10 +187,22 @@ class ImageService:
         total_text_width = max(transbox(font.getbbox(line))[0] for line in lines)
         left_offset = (text_area_width - total_text_width) // 2 - 20
 
+        emoji_source = RobustGoogleEmojiSource(disk_cache=True, enable_fallback=True)
+
         for line in lines:
             x = left_offset + 20
-            with Pilmoji(text_area, source=GoogleEmojiSource) as pilmoji:
-                pilmoji.text(
+            try:
+                with Pilmoji(text_area, source=emoji_source) as pilmoji:
+                    pilmoji.text(
+                        (x, vertical_offset + y),
+                        line,
+                        font=font,
+                        fill=(255, 255, 255, 255),
+                    )
+            except Exception as e:
+                logger.warning(f"表情符号渲染失败，使用普通文本: {e}", "群聊语录")
+                draw = ImageDraw.Draw(text_area)
+                draw.text(
                     (x, vertical_offset + y), line, font=font, fill=(255, 255, 255, 255)
                 )
             y += line_height + line_spacing
@@ -182,8 +212,18 @@ class ImageService:
         author_width = transbox(author_font.getbbox(author_text))[0]
         author_x = text_area_width - author_width - 40
         author_y = text_area_height - transbox(author_font.getbbox("A"))[1] - 40
-        with Pilmoji(text_area, source=GoogleEmojiSource) as pilmoji:
-            pilmoji.text(
+        try:
+            with Pilmoji(text_area, source=emoji_source) as pilmoji:
+                pilmoji.text(
+                    (author_x, author_y),
+                    author_text,
+                    font=author_font,
+                    fill=(255, 255, 255, 255),
+                )
+        except Exception as e:
+            logger.warning(f"作者名表情符号渲染失败，使用普通文本: {e}", "群聊语录")
+            draw = ImageDraw.Draw(text_area)
+            draw.text(
                 (author_x, author_y),
                 author_text,
                 font=author_font,
@@ -246,7 +286,9 @@ class ImageService:
             else:
                 filename = f"{image_hash}.png"
 
-            image_path = os.path.abspath(os.path.join(save_dir, filename))
+            save_dir = Path(save_dir)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            image_path = save_dir / filename
 
             async with aiofiles.open(image_path, "wb") as file:
                 await file.write(image_data)

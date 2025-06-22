@@ -5,6 +5,9 @@ from typing import Any, ClassVar
 from urllib.error import HTTPError
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
+import time
+import ssl
+import socket
 
 try:
     import requests
@@ -22,6 +25,7 @@ __all__ = (
     "FacebookEmojiSource",
     "GoogleEmojiSource",
     "HTTPBasedSource",
+    "RobustGoogleEmojiSource",
     "Twemoji",
     "TwemojiEmojiSource",
     "TwitterEmojiSource",
@@ -82,8 +86,8 @@ class HTTPBasedSource(BaseSource):
         if _has_requests:
             self._requests_session = requests.Session()
 
-    def request(self, url: str) -> bytes:
-        """Makes a GET request to the given URL.
+    def request(self, url: str, max_retries: int = 3, timeout: int = 10) -> bytes:
+        """Makes a GET request to the given URL with retry mechanism.
 
         If the `requests` library is installed, it will be used.
         If it is not installed, :meth:`urllib.request.urlopen` will be used instead.
@@ -92,6 +96,10 @@ class HTTPBasedSource(BaseSource):
         ----------
         url: str
             The URL to request from.
+        max_retries: int
+            Maximum number of retry attempts. Defaults to 3.
+        timeout: int
+            Request timeout in seconds. Defaults to 10.
 
         Returns
         -------
@@ -102,14 +110,45 @@ class HTTPBasedSource(BaseSource):
         Union[:class:`requests.HTTPError`, :class:`urllib.error.HTTPError`]
             There was an error requesting from the URL.
         """
-        if _has_requests:
-            with self._requests_session.get(url, **self.REQUEST_KWARGS) as response:
-                if response.ok:
-                    return response.content
+        last_exception = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                if _has_requests:
+                    kwargs = self.REQUEST_KWARGS.copy()
+                    kwargs["timeout"] = timeout
+                    with self._requests_session.get(url, **kwargs) as response:
+                        if response.ok:
+                            return response.content
+                        else:
+                            response.raise_for_status()
+                else:
+                    req = Request(url, **self.REQUEST_KWARGS)
+                    with urlopen(req, timeout=timeout) as response:
+                        return response.read()
+
+            except (
+                HTTPError,
+                socket.timeout,
+                ssl.SSLError,
+                ConnectionError,
+                OSError,
+            ) as e:
+                last_exception = e
+                if attempt < max_retries:
+                    wait_time = (2**attempt) * 0.5
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    break
+            except Exception as e:
+                last_exception = e
+                break
+
+        if last_exception:
+            raise last_exception
         else:
-            req = Request(url, **self.REQUEST_KWARGS)
-            with urlopen(req) as response:
-                return response.read()
+            raise HTTPError(url, 500, "Unknown error occurred", None, None)
 
     @abstractmethod
     def get_emoji(self, emoji: str, /) -> BytesIO | None:
@@ -131,12 +170,19 @@ class DiscordEmojiSourceMixin(HTTPBasedSource):
 
     def get_discord_emoji(self, id: int, /) -> BytesIO | None:
         url = self.BASE_DISCORD_EMOJI_URL + str(id) + ".png"
-        _to_catch = HTTPError if not _has_requests else requests.HTTPError
 
         try:
-            return BytesIO(self.request(url))
-        except _to_catch:
-            pass
+            return BytesIO(self.request(url, max_retries=2, timeout=5))
+        except Exception as e:
+            try:
+                from zhenxun.services.log import logger
+
+                logger.warning(
+                    f"Discord表情符号下载失败: {id} from {url}: {e}", "群聊语录"
+                )
+            except ImportError:
+                print(f"Warning: Failed to download Discord emoji {id} from {url}: {e}")
+            return None
 
 
 class EmojiCDNSource(DiscordEmojiSourceMixin):
@@ -170,15 +216,24 @@ class EmojiCDNSource(DiscordEmojiSourceMixin):
                     + "?style="
                     + quote_plus(self.STYLE)
                 )
-                _to_catch = HTTPError if not _has_requests else requests.HTTPError
 
                 try:
-                    data = self.request(url)
+                    data = self.request(url, max_retries=2, timeout=5)
                     with cache_file.open("wb") as f:
                         f.write(data)
                     return BytesIO(data)
-                except _to_catch:
-                    pass
+                except Exception as e:
+                    try:
+                        from zhenxun.services.log import logger
+
+                        logger.warning(
+                            f"表情符号下载失败: {emoji} from {url}: {e}", "群聊语录"
+                        )
+                    except ImportError:
+                        print(
+                            f"Warning: Failed to download emoji {emoji} from {url}: {e}"
+                        )
+                    return None
         else:
             url = (
                 self.BASE_EMOJI_CDN_URL
@@ -186,12 +241,19 @@ class EmojiCDNSource(DiscordEmojiSourceMixin):
                 + "?style="
                 + quote_plus(self.STYLE)
             )
-            _to_catch = HTTPError if not _has_requests else requests.HTTPError
 
             try:
-                return BytesIO(self.request(url))
-            except _to_catch:
-                pass
+                return BytesIO(self.request(url, max_retries=2, timeout=5))
+            except Exception as e:
+                try:
+                    from zhenxun.services.log import logger
+
+                    logger.warning(
+                        f"表情符号下载失败: {emoji} from {url}: {e}", "群聊语录"
+                    )
+                except ImportError:
+                    print(f"Warning: Failed to download emoji {emoji} from {url}: {e}")
+                return None
 
 
 class TwitterEmojiSource(EmojiCDNSource):
@@ -210,6 +272,36 @@ class GoogleEmojiSource(EmojiCDNSource):
     """A source that uses Google emojis."""
 
     STYLE = "google"
+
+
+class RobustGoogleEmojiSource(GoogleEmojiSource):
+    """A robust Google emoji source with fallback strategies."""
+
+    def __init__(self, disk_cache=True, enable_fallback=True):
+        """
+        初始化健壮的Google表情符号源
+
+        Parameters
+        ----------
+        disk_cache: bool
+            是否启用磁盘缓存，默认为True
+        enable_fallback: bool
+            是否启用降级策略，默认为True
+        """
+        super().__init__(disk_cache=disk_cache)
+        self.enable_fallback = enable_fallback
+        self._failed_emojis = set()
+
+    def get_emoji(self, emoji: str, /) -> BytesIO | None:
+        if emoji in self._failed_emojis:
+            return None
+
+        result = super().get_emoji(emoji)
+
+        if result is None:
+            self._failed_emojis.add(emoji)
+
+        return result
 
 
 class FacebookEmojiSource(EmojiCDNSource):
