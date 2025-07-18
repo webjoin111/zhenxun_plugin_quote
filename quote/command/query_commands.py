@@ -1,27 +1,29 @@
-from pathlib import Path
+import os
 
 from arclet.alconna import Alconna, Args, Arparma, Option, Subcommand, MultiVar
-from nonebot.adapters.onebot.v11 import Bot, Event, MessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import Bot, Event, MessageEvent
 from nonebot.permission import SUPERUSER
 from nonebot.typing import T_State
 from nonebot_plugin_alconna import At, on_alconna
-from nonebot_plugin_alconna.uniseg import UniMessage
+from nonebot_plugin_alconna.uniseg import Image, UniMessage
+from nonebot_plugin_alconna.uniseg.tools import reply_fetch
+from nonebot_plugin_uninfo import Uninfo
 
 from zhenxun.services.log import logger
 from zhenxun.utils.image_utils import BuildImage
 from zhenxun.utils.message import MessageUtils
 from zhenxun.utils.platform import PlatformUtils
 
-from ..config import safe_file_exists
+from ..config import safe_file_exists, resolve_quote_image_path, DATA_PATH
+from ..model import Quote
 from ..services.quote_service import QuoteService
-from ..utils.exceptions import ReplyImageNotFoundException
-from ..utils.message_utils import (
-    extract_image_basename_from_reply,
-    get_group_id_from_session,
-)
+from ..services.theme_service import theme_service
 
 quote_alc = Alconna("语录", Args["target_user?", At]["search_keywords?", MultiVar(str)])
 record_pool = on_alconna(quote_alc, priority=2, block=True)
+
+theme_list_alc = Alconna("语录主题")
+theme_list_cmd = on_alconna(theme_list_alc, block=True, priority=5)
 
 alltag_alc = Alconna("alltag")
 alltag_cmd = on_alconna(alltag_alc, aliases={"标签", "tag"}, block=True)
@@ -36,306 +38,176 @@ stats_alc = Alconna(
 quote_stats_cmd = on_alconna(stats_alc, priority=5, block=True)
 
 
+async def _get_valid_quote(
+    group_id: str,
+    user_id_filter: str | None = None,
+    keyword: str | None = None,
+    max_retries: int = 3,
+) -> Quote | None:
+    """
+    安全地获取一条有效的语录。
+    该函数会检查语录对应的图片文件是否存在，如果不存在，则删除该条记录并尝试重新获取。
+    """
+    for _ in range(max_retries):
+        quote: Quote | None = None
+        if keyword:
+            quote = await QuoteService.search_quote(group_id, keyword, user_id_filter)
+        else:
+            quote = await QuoteService.get_random_quote(group_id, user_id_filter)
+
+        if not quote:
+            return None
+
+        if safe_file_exists(quote.image_path):
+            return quote
+
+        logger.warning(
+            f"数据库中的语录 (ID: {quote.id}) 对应的图片文件不存在: {quote.image_path}",
+            "群聊语录",
+        )
+        await quote.delete()
+        logger.info(f"已删除无效的语录记录 ID: {quote.id}", "群聊语录")
+
+    logger.error(
+        f"在尝试 {max_retries} 次后仍未找到有效的语录文件，放弃操作。", "群聊语录"
+    )
+    return None
+
+
+@theme_list_cmd.handle()
+async def handle_theme_list(bot: Bot, event: Event):
+    """处理"语录主题"命令，列出所有可用的主题。"""
+    try:
+        themes = theme_service.list_themes()
+        if not themes:
+            await theme_list_cmd.finish("当前没有可用的语录主题。")
+
+        message_parts = ["可用的语录主题列表："]
+        for theme in themes:
+            theme_id = theme.get("id", "未知ID")
+            name = theme.get("name", "未命名")
+            desc = theme.get("description", "无描述")
+            message_parts.append(f"\n- {theme_id} ({name})\n  {desc}")
+
+        message_to_send = "\n".join(message_parts)
+
+    except Exception as e:
+        logger.error("获取语录主题列表失败", "群聊语录", e=e)
+        await theme_list_cmd.finish("获取主题列表失败，请查看后台日志。")
+        return
+
+    await theme_list_cmd.finish(message_to_send)
+
+
 @record_pool.handle()
 async def record_pool_handle(bot: Bot, event: Event, arp: Arparma, state: T_State):
-    """语录查询处理函数"""
+    """语录查询处理函数 (重构后)"""
     session_id = event.get_session_id()
-
-    if "group" in session_id:
-        group_id = session_id.split("_")[1]
-        target = PlatformUtils.get_target(group_id=group_id)
-
-        at_user_info: At | None = arp.all_matched_args.get("target_user")
-        search_keywords: list[str] = arp.all_matched_args.get("search_keywords", [])
-
-        search_key_processed = ""
-        if search_keywords:
-            search_key_processed = " ".join(search_keywords)
-            logger.debug(f"从MultiVar获取到的关键词列表: {search_keywords}", "群聊语录")
-
-        logger.debug(f"处理后的搜索关键词: '{search_key_processed}'", "群聊语录")
-
-        quoted_user_id_filter: str | None = None
-        if at_user_info:
-            quoted_user_id_filter = str(at_user_info.target)
-            logger.info(f"语录查询指定用户: {quoted_user_id_filter}", "群聊语录")
-
-        final_message_to_send: UniMessage | str | Path | None = None
-
-        if quoted_user_id_filter:
-            if search_key_processed:
-                quote = await QuoteService.search_quote(
-                    group_id, search_key_processed, user_id_filter=quoted_user_id_filter
-                )
-                if not quote:
-                    logger.info(
-                        f"用户 {quoted_user_id_filter} 的关键词 '{search_key_processed}' 未找到，尝试随机其语录",
-                        "群聊语录",
-                    )
-                    quote = await QuoteService.get_random_quote(
-                        group_id, user_id_filter=quoted_user_id_filter
-                    )
-                    if quote:
-                        msg_content = [
-                            At(target=quoted_user_id_filter, flag="user"),
-                            f" 关于 '{search_key_processed}' 的语录没找到哦，这是TA的一条随机语录：\n",
-                            Path(quote.image_path),
-                        ]
-                        final_message_to_send = MessageUtils.build_message(msg_content)
-                    else:
-                        final_message_to_send = MessageUtils.build_message(
-                            [
-                                At(target=quoted_user_id_filter, flag="user"),
-                                " 没有任何语录哦~",
-                            ]
-                        )
-                else:
-                    if safe_file_exists(quote.image_path):
-                        final_message_to_send = Path(quote.image_path)
-                    else:
-                        logger.error(
-                            f"搜索到的图片不存在: {quote.image_path}", "群聊语录"
-                        )
-                        quote_id = quote.id
-                        await quote.delete()
-                        logger.info(
-                            f"删除不存在图片的语录记录 ID: {quote_id}", "群聊语录"
-                        )
-                        new_quote = await QuoteService.get_random_quote(
-                            group_id, user_id_filter=quoted_user_id_filter
-                        )
-                        if new_quote and safe_file_exists(new_quote.image_path):
-                            final_message_to_send = MessageUtils.build_message(
-                                [
-                                    At(target=quoted_user_id_filter, flag="user"),
-                                    f" 关于 '{search_key_processed}' 的语录图片不存在，这是TA的一条随机语录：\n",
-                                    Path(new_quote.image_path),
-                                ]
-                            )
-                        else:
-                            final_message_to_send = MessageUtils.build_message(
-                                [
-                                    At(target=quoted_user_id_filter, flag="user"),
-                                    " 关于该关键词的语录图片不存在，且无其他可用语录。",
-                                ]
-                            )
-            else:
-                quote = await QuoteService.get_random_quote(
-                    group_id, user_id_filter=quoted_user_id_filter
-                )
-                if quote:
-                    if safe_file_exists(quote.image_path):
-                        final_message_to_send = Path(quote.image_path)
-                    else:
-                        logger.error(
-                            f"随机获取的图片不存在: {quote.image_path}", "群聊语录"
-                        )
-                        quote_id = quote.id
-                        await quote.delete()
-                        logger.info(
-                            f"删除不存在图片的语录记录 ID: {quote_id}", "群聊语录"
-                        )
-                        new_quote = await QuoteService.get_random_quote(
-                            group_id, user_id_filter=quoted_user_id_filter
-                        )
-                        if new_quote and safe_file_exists(new_quote.image_path):
-                            final_message_to_send = Path(new_quote.image_path)
-                        else:
-                            final_message_to_send = MessageUtils.build_message(
-                                [
-                                    At(target=quoted_user_id_filter, flag="user"),
-                                    " 语录图片不存在，且无其他可用语录。",
-                                ]
-                            )
-                else:
-                    final_message_to_send = MessageUtils.build_message(
-                        [
-                            At(target=quoted_user_id_filter, flag="user"),
-                            " 没有任何语录哦~",
-                        ]
-                    )
-        else:
-            if not search_key_processed:
-                quote = await QuoteService.get_random_quote(group_id)
-                if not quote:
-                    final_message_to_send = "当前无语录库"
-                else:
-                    if safe_file_exists(quote.image_path):
-                        final_message_to_send = Path(quote.image_path)
-                    else:
-                        logger.error(
-                            f"随机获取的图片不存在: {quote.image_path}", "群聊语录"
-                        )
-                        quote_id = quote.id
-                        await quote.delete()
-                        logger.info(
-                            f"删除不存在图片的语录记录 ID: {quote_id}", "群聊语录"
-                        )
-                        new_quote = await QuoteService.get_random_quote(group_id)
-                        if new_quote and safe_file_exists(new_quote.image_path):
-                            final_message_to_send = Path(new_quote.image_path)
-                        else:
-                            final_message_to_send = "语录图片不存在，请联系管理员"
-            else:
-                quote = await QuoteService.search_quote(group_id, search_key_processed)
-                if not quote:
-                    random_quote_obj = await QuoteService.get_random_quote(group_id)
-                    if not random_quote_obj:
-                        final_message_to_send = "当前无语录库"
-                    else:
-                        if safe_file_exists(random_quote_obj.image_path):
-                            final_message_to_send = MessageUtils.build_message(
-                                [
-                                    "当前查询无结果, 为您随机发送。",
-                                    Path(random_quote_obj.image_path),
-                                ]
-                            )
-                        else:
-                            logger.error(
-                                f"随机获取的图片不存在: {random_quote_obj.image_path}",
-                                "群聊语录",
-                            )
-                            quote_id = random_quote_obj.id
-                            await random_quote_obj.delete()
-                            logger.info(
-                                f"删除不存在图片的语录记录 ID: {quote_id}", "群聊语录"
-                            )
-                            new_quote = await QuoteService.get_random_quote(group_id)
-                            if new_quote and safe_file_exists(new_quote.image_path):
-                                final_message_to_send = MessageUtils.build_message(
-                                    [
-                                        "当前查询无结果, 为您随机发送。",
-                                        Path(new_quote.image_path),
-                                    ]
-                                )
-                            else:
-                                final_message_to_send = "语录图片不存在，请联系管理员"
-                else:
-                    if safe_file_exists(quote.image_path):
-                        final_message_to_send = Path(quote.image_path)
-                    else:
-                        logger.error(
-                            f"搜索到的图片不存在: {quote.image_path}", "群聊语录"
-                        )
-                        quote_id = quote.id
-                        await quote.delete()
-                        logger.info(
-                            f"删除不存在图片的语录记录 ID: {quote_id}", "群聊语录"
-                        )
-                        new_quote = await QuoteService.get_random_quote(group_id)
-                        if new_quote and safe_file_exists(new_quote.image_path):
-                            final_message_to_send = MessageUtils.build_message(
-                                [
-                                    f"关于 '{search_key_processed}' 的语录图片不存在，为您随机发送：",
-                                    Path(new_quote.image_path),
-                                ]
-                            )
-                        else:
-                            final_message_to_send = "语录图片不存在，请联系管理员"
-
-        if isinstance(final_message_to_send, str):
-            await MessageUtils.build_message(final_message_to_send).send(
-                target=target, bot=bot
-            )
-        elif isinstance(final_message_to_send, Path):
-            if final_message_to_send.exists():
-                if quote:
-                    await QuoteService.increment_view_count(quote.id)
-                    logger.debug(f"增加语录ID {quote.id} 的查看次数", "群聊语录")
-                await MessageUtils.build_message(final_message_to_send).send(
-                    target=target, bot=bot
-                )
-            else:
-                logger.error(f"图片不存在: {final_message_to_send}", "群聊语录")
-
-                if quote:
-                    quote_id = quote.id
-                    logger.info(
-                        f"尝试删除不存在图片的语录记录 ID: {quote_id}", "群聊语录"
-                    )
-                    await quote.delete()
-                    logger.info(
-                        f"成功删除不存在图片的语录记录 ID: {quote_id}", "群聊语录"
-                    )
-
-                    if quoted_user_id_filter:
-                        new_quote = await QuoteService.get_random_quote(
-                            group_id, user_id_filter=quoted_user_id_filter
-                        )
-                    else:
-                        new_quote = await QuoteService.get_random_quote(group_id)
-
-                    if new_quote:
-                        if safe_file_exists(new_quote.image_path):
-                            await QuoteService.increment_view_count(new_quote.id)
-                            logger.info(
-                                f"重新获取到语录 ID: {new_quote.id}", "群聊语录"
-                            )
-                            await MessageUtils.build_message(
-                                Path(new_quote.image_path)
-                            ).send(target=target, bot=bot)
-                        else:
-                            await MessageUtils.build_message(
-                                "图片文件不存在，请联系管理员"
-                            ).send(target=target, bot=bot)
-                    else:
-                        await MessageUtils.build_message("当前无可用语录").send(
-                            target=target, bot=bot
-                        )
-                else:
-                    await MessageUtils.build_message(
-                        "图片文件不存在，请联系管理员"
-                    ).send(target=target, bot=bot)
-        elif isinstance(final_message_to_send, UniMessage):
-            await final_message_to_send.send(target=target, bot=bot)
-        elif final_message_to_send is None:
-            logger.warning(
-                "final_message_to_send is None, no message to send.", "群聊语录"
-            )
-        else:
-            logger.error(
-                f"未知的 final_message_to_send 类型: {type(final_message_to_send)}",
-                "群聊语录",
-            )
-            await MessageUtils.build_message("发生未知错误，无法发送语录。").send(
-                target=target, bot=bot
-            )
-
-
-@alltag_cmd.handle()
-async def alltag_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_State):
-    """查看语录标签处理函数"""
-    session_id = event.get_session_id()
-    user_id = str(event.get_user_id())
-
     if "group" not in session_id:
         return
 
     group_id = session_id.split("_")[1]
-    errMsg = "请回复需要指定语录"
+    target = PlatformUtils.get_target(group_id=group_id)
 
-    try:
-        image_basename = await extract_image_basename_from_reply(bot, event)
+    at_user_info: At | None = arp.all_matched_args.get("target_user")
+    search_keywords: list[str] = arp.all_matched_args.get("search_keywords", [])
+    search_key_processed = " ".join(search_keywords) if search_keywords else ""
+    user_id_filter: str | None = str(at_user_info.target) if at_user_info else None
 
-        quote = await QuoteService.find_quote_by_basename(group_id, image_basename)
-        msg_text = ""
-        if not quote:
-            msg_text = "该语录不存在"
-        else:
-            tags = quote.tags
-            if tags and len(tags) > 0:
-                msg_text = "该语录的所有Tag为: " + " ".join(tags)
-            else:
-                msg_text = "该语录没有标签"
+    quote: Quote | None = None
+    fallback_message: UniMessage | None = None
 
-        await bot.send_msg(
-            group_id=int(group_id), message=MessageSegment.at(user_id) + msg_text
+    if user_id_filter:
+        quote = await _get_valid_quote(
+            group_id, user_id_filter=user_id_filter, keyword=search_key_processed
         )
-    except ReplyImageNotFoundException:
-        target = PlatformUtils.get_target(group_id=group_id)
-        at_msg = MessageUtils.build_message([At(target=user_id, flag="user"), errMsg])
-        await at_msg.send(target=target, bot=bot)
-        await alltag_cmd.finish()
+        if not quote and search_key_processed:
+            fallback_quote = await _get_valid_quote(
+                group_id, user_id_filter=user_id_filter
+            )
+            if fallback_quote:
+                quote = fallback_quote
+                fallback_message = MessageUtils.build_message(
+                    [
+                        At(target=user_id_filter, flag="user"),
+                        f" 关于 '{search_key_processed}' 的语录没找到哦，这是TA的一条随机语录：\n",
+                    ]
+                )
+            else:
+                await MessageUtils.build_message(
+                    [At(target=user_id_filter, flag="user"), " 没有任何语录哦~"]
+                ).send(target=target, bot=bot)
+                return
+    else:
+        quote = await _get_valid_quote(group_id, keyword=search_key_processed)
+        if not quote and search_key_processed:
+            fallback_quote = await _get_valid_quote(group_id)
+            if fallback_quote:
+                quote = fallback_quote
+                fallback_message = MessageUtils.build_message(
+                    ["当前查询无结果, 为您随机发送。"]
+                )
+            else:
+                await MessageUtils.build_message("当前无语录库").send(
+                    target=target, bot=bot
+                )
+                return
+
+    if not quote:
+        await MessageUtils.build_message("当前无语录库").send(target=target, bot=bot)
+        return
+
+    absolute_path = resolve_quote_image_path(quote.image_path)
+    message_to_send = MessageUtils.build_message(absolute_path)
+
+    if fallback_message:
+        await fallback_message.send(target=target, bot=bot)
+
+    await QuoteService.increment_view_count(quote.id)
+    await message_to_send.send(target=target, bot=bot)
+
+    if os.path.isabs(quote.image_path):
+        try:
+            relative_path = os.path.relpath(quote.image_path, DATA_PATH)
+            quote.image_path = relative_path
+            await quote.save(update_fields=["image_path"])
+            logger.info(f"已将语录 {quote.id} 的路径更新为相对路径: {relative_path}")
+        except Exception as e:
+            logger.warning(f"惰性迁移语录 {quote.id} 路径失败: {e}")
+
+
+@alltag_cmd.handle()
+async def alltag_handle(bot: Bot, event: MessageEvent, arp: Arparma, session: Uninfo):
+    """查看语录标签处理函数"""
+    if not session.group:
+        return
+
+    user_id = session.user.id
+    group_id = session.group.id
+
+    reply = await reply_fetch(event, bot)
+    if not reply or not (image_seg := reply.get(Image, 0)):
+        await MessageUtils.build_message(
+            [At(target=user_id, flag="user"), " 请回复需要指定语录的图片。"]
+        ).send()
+        return
+
+    image_basename = os.path.basename(image_seg.id)
+
+    quote = await QuoteService.find_quote_by_basename(group_id, image_basename)
+    msg_text = ""
+    if not quote:
+        msg_text = "该语录不存在"
+    else:
+        tags = quote.tags
+        if tags and len(tags) > 0:
+            msg_text = "该语录的所有Tag为: " + " ".join(tags)
+        else:
+            msg_text = "该语录没有标签"
+
+    await MessageUtils.build_message(
+        [At(target=user_id, flag="user"), " " + msg_text]
+    ).send()
 
 
 @quote_stats_cmd.handle()
@@ -352,7 +224,7 @@ async def handle_quote_stats(bot: Bot, event: Event, arp: Arparma):
     if target_group_id_opt and is_superuser:
         group_id_to_query = target_group_id_opt
     elif "group" in session_id:
-        group_id_to_query = get_group_id_from_session(session_id)
+        group_id_to_query = session_id.split("_")[1]
 
     if not group_id_to_query:
         await quote_stats_cmd.finish(
@@ -361,9 +233,7 @@ async def handle_quote_stats(bot: Bot, event: Event, arp: Arparma):
         return
 
     reply_target = PlatformUtils.get_target(
-        group_id=get_group_id_from_session(session_id)
-        if "group" in session_id
-        else None,
+        group_id=session_id.split("_")[1] if "group" in session_id else None,
         user_id=current_user_id if "private" in session_id else None,
     )
     if not reply_target:

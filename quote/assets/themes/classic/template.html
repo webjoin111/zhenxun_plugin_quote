@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="{{ style_path }}">
+
+    <style>
+      {% if text_font_face_src %}
+      @font-face {
+        font-family: 'TextFont';
+        src: url("{{ text_font_face_src }}");
+      }
+      {% endif %}
+
+      {% if author_font_face_src %}
+      @font-face {
+        font-family: 'AuthorFont';
+        src: url("{{ author_font_face_src }}");
+      }
+      {% endif %}
+
+      {% if palette %}
+      :root {
+          {% for key, value in palette.items() %}
+              {{ key }}: {{ value }};
+          {% endfor %}
+      }
+      {% endif %}
+    </style>
+    <title>语录卡片</title>
+  </head>
+  <body>
+    <div class="quote-card-single">
+      <div class="avatar-container">
+        <img src="{{ avatar_data_url }}" alt="avatar" class="avatar" />
+      </div>
+      <div class="content-container">
+        <div class="text-content">「{{ text }}」</div>
+        <div class="author">— {{ author }}</div>
+      </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const textElement = document.querySelector('.text-content');
+            const containerElement = document.querySelector('.content-container');
+            if (!textElement || !containerElement) return;
+
+            let fontSize = parseFloat(window.getComputedStyle(textElement).fontSize);
+            const minFontSize = 12;
+
+            while (containerElement.scrollHeight > containerElement.clientHeight && fontSize > minFontSize) {
+                fontSize -= 1;
+                textElement.style.fontSize = fontSize + 'px';
+            }
+        });
+    </script>
+  </body>
+</html>

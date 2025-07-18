@@ -1,0 +1,43 @@
+@import url('../classic/styles.css');
+
+.quote-card-single {
+    border-radius: 16px;
+    background: linear-gradient(135deg, var(--card-bg-color) 0%, #1E293B 100%);
+    border-top: 3px solid #38BDF8;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
+}
+
+.quote-card-single .avatar {
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.2);
+    width: 320px;
+    height: 320px;
+    margin: 40px;
+    object-fit: cover;
+}
+
+
+
+.quote-card-single .avatar-container {
+    border-top-left-radius: 16px;
+    border-bottom-left-radius: 16px;
+    overflow: hidden;
+}
+
+.quote-card-single .avatar-container::after {
+    border-top-left-radius: 16px;
+    border-bottom-left-radius: 16px;
+    background: radial-gradient(circle at 75%, transparent 60%, var(--gradient-end) 95%);
+}
+
+
+
+.quote-card-single .text-content {
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.quote-card-single .author {
+    font-weight: 700;
+    opacity: 0.8;
+}

@@ -152,12 +152,12 @@ class OCRService:
         try:
             ai_content = await AIService.recognize_image(image_path)
 
-            if ai_content:
-                cls._cache[image_path] = ai_content
+            if ai_content is not None:
                 logger.debug(f"AI识别成功，文本长度: {len(ai_content)}", "群聊语录")
+                cls._cache[image_path] = ai_content
                 return ai_content
             else:
-                logger.debug("AI识别所有重试均未成功，降级使用OCR引擎", "群聊语录")
+                logger.debug("AI识别失败或未启用，降级使用本地OCR引擎", "群聊语录")
 
                 if cls._engine_name == "easyocr":
                     ocr_content = await cls._run_easyocr(image_path)
@@ -192,13 +192,12 @@ class OCRService:
                 if ocr_content:
                     cls._cache[image_path] = ocr_content
                     logger.debug(
-                        f"OCR识别成功，文本长度: {len(ocr_content)}", "群聊语录"
+                        f"本地OCR识别成功，文本长度: {len(ocr_content)}", "群聊语录"
                     )
                 else:
                     logger.warning(
-                        f"OCR识别失败，未能提取文本: {image_path}", "群聊语录"
+                        f"所有OCR引擎均识别失败，未能提取文本: {image_path}", "群聊语录"
                     )
-
                 return ocr_content
         except Exception as e:
             logger.error(f"文本识别过程发生异常: {e}", "群聊语录", e=e)

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="styles.css">
+    <title>热门语录</title>
+</head>
+<body>
+    <div class="leaderboard-container">
+        <h1>群组 {{ group_id }} 热门语录</h1>
+        <div class="quotes-grid">
+            {% for quote in quotes %}
+            <div class="quote-item">
+                <div class="item-header">
+                    <span class="rank">No.{{ quote.rank }}</span>
+                    <span class="quote-id">ID: {{ quote.quote_id }}</span>
+                </div>
+                <div class="item-body">
+                    <div class="item-avatar-section">
+                        {% if quote.avatar_data_url %}
+                            <img src="{{ quote.avatar_data_url }}" alt="avatar" class="item-avatar">
+                        {% else %}
+                            <div class="item-avatar-placeholder">?</div>
+                        {% endif %}
+                        <div class="item-username">{{ quote.user_name }}</div>
+                    </div>
+                    <div class="item-preview">
+                        {% if quote.is_image_quote and quote.image_path %}
+                            <img src="{{ quote.image_path }}" alt="语录图片" class="preview-image">
+                        {% else %}
+                            <p>{{ quote.preview_text }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="item-footer">
+                    <span class="view-count">查看: {{ quote.view_count }}次</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>

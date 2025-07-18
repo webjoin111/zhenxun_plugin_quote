@@ -1,5 +1,7 @@
 from tortoise import fields
-from tortoise.models import Model
+from zhenxun.services.db_context import Model
+
+QUOTE_CACHE_TYPE = "QUOTE_CACHE"
 
 
 class Quote(Model):
@@ -37,6 +39,11 @@ class Quote(Model):
 
     view_count = fields.IntField(default=0)
     """查看次数"""
+
+    cache_type = QUOTE_CACHE_TYPE
+    """缓存类型"""
+    cache_key_field = "id"
+    """缓存键字段 (使用语录的ID作为缓存的唯一键)"""
 
     class Meta:
         table = "quote"

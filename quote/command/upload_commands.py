@@ -1,42 +1,85 @@
-import asyncio
 import hashlib
 import os
-import re
-import shutil
 import uuid
 
 import aiofiles
-from arclet.alconna import Alconna, AllParam, Args, Arparma
+from arclet.alconna import Alconna, Args, Arparma, Option
 import httpx
-from nonebot.adapters.onebot.v11 import Bot, Event, MessageEvent, MessageSegment
-from nonebot.permission import SUPERUSER
+from nonebot.adapters.onebot.v11 import Bot, MessageEvent, MessageSegment
 from nonebot.typing import T_State
 from nonebot_plugin_alconna import on_alconna
-from nonebot_plugin_alconna.uniseg import Image as UniImage
+from nonebot_plugin_alconna.uniseg import Image as UniImage, UniMessage
+from nonebot_plugin_alconna.uniseg.tools import reply_fetch
+from nonebot_plugin_uninfo import Uninfo
 
 from zhenxun.services.log import logger
+from zhenxun.utils.message import MessageUtils
 
-from ..config import get_author_font_path, get_font_path, get_quote_path, ensure_quote_path
+from ..config import ensure_quote_path
 from ..services.ocr_service import OCRService
 from ..services.quote_service import QuoteService
 from ..utils.exceptions import ImageProcessError, NetworkError
-from ..utils.image_utils import copy_images_files, download_qq_avatar, get_img_hash
-from ..utils.message_utils import get_group_id_from_session, send_group_message
+from ..utils.image_utils import download_qq_avatar, get_img_hash
+
+async def _extract_info_from_reply(event: MessageEvent, bot: Bot):
+    """
+    仅从回复消息中提取信息，不执行任何网络或渲染操作。
+    返回一个包含信息的元组，或一个包含错误信息的元组。
+    """
+    reply = await reply_fetch(event, bot)
+    if not reply or not reply.msg:
+        return None, "请回复需要处理的消息，或无法获取回复的详细消息内容。"
+
+    if not (event.reply and event.reply.sender):
+        return None, "无法获取回复者信息。"
+
+    replied_message = await UniMessage.generate(message=reply.msg, bot=bot)
+    raw_message = replied_message.extract_plain_text().strip()
+    if not raw_message:
+        return None, "回复的消息内容为空。"
+
+    sender = event.reply.sender
+    qqid = sender.user_id
+    card = sender.card or sender.nickname or str(qqid)
+
+    return (raw_message, card, qqid), None
+
+async def _generate_quote_from_reply(event: MessageEvent, bot: Bot, style_name: str | None = None):
+    """
+    从回复消息中提取信息并生成语录图片。
+    这是一个辅助函数，用于合并 make_record 和 render_quote 的公共逻辑。
+    """
+    info, error = await _extract_info_from_reply(event, bot)
+    if error:
+        return None, error
+
+    raw_message, card, qqid = info
+
+    try:
+        avatar_data = await download_qq_avatar(qqid)
+
+        img_data = await QuoteService.generate_temp_quote(
+            avatar_bytes=avatar_data,
+            text=raw_message,
+            author=card,
+            save_to_file=False,
+            style_name=style_name,
+        )
+        return (img_data, card, raw_message, qqid), None
+    except (NetworkError, ImageProcessError) as e:
+        return None, str(e)
+    except Exception as e:
+        logger.error(f"生成语录图片时发生未知错误: {e}", "群聊语录", e=e)
+        return None, f"生成语录图片时发生未知错误: {e}"
+
 
 upload_alc = Alconna("上传", Args["image?", UniImage])
 save_img_cmd = on_alconna(upload_alc, auto_send_output=False, block=True)
-
-make_record_alc = Alconna("记录")
+make_record_alc = Alconna("记录", Args(), Option("-s|--style", Args["style_name", str], help_text="指定主题样式"))
 make_record_cmd = on_alconna(make_record_alc, block=True)
 
-render_quote_alc = Alconna("生成")
-render_quote_cmd = on_alconna(render_quote_alc, block=True)
-
-batch_upload_alc = Alconna("batch_upload", Args["content?", AllParam])
-script_batch_cmd = on_alconna(batch_upload_alc, permission=SUPERUSER, block=True)
-
-copy_batch_alc = Alconna("batch_copy", Args["content?", AllParam])
-copy_batch_cmd = on_alconna(copy_batch_alc, permission=SUPERUSER, block=True)
+generate_quote_alc = Alconna("生成", Args(), Option("-s|--style", Args["style_name", str], help_text="指定主题样式"))
+generate_quote_cmd = on_alconna(generate_quote_alc, block=True)
 
 
 @save_img_cmd.handle()
@@ -155,51 +198,33 @@ async def save_img_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_
         return
 
     image_hash = await get_img_hash(temp_image_path)
-
-    ocr_content = await OCRService.recognize_text(temp_image_path)
+    ocr_content = await OCRService.recognize_text(str(temp_image_path))
 
     if "group" in session_id:
         group_id = session_id.split("_")[1]
 
-        duplicate = await QuoteService.check_duplicate_by_hash(group_id, image_hash)
+        image_name = hashlib.md5(img_data).hexdigest() + ".png"
+        quote_path = ensure_quote_path()
+        final_image_path = quote_path / image_name
 
-        if duplicate:
-            logger.info("发现重复图片，不保存新图片", "群聊语录")
+        async with aiofiles.open(final_image_path, "wb") as f:
+            await f.write(img_data)
 
-            if temp_image_path != image_path and os.path.exists(temp_image_path):
-                try:
-                    os.remove(temp_image_path)
-                    logger.info(f"删除临时文件: {temp_image_path}", "群聊语录")
-                except Exception as e:
-                    logger.error(f"删除临时文件失败: {e}", "群聊语录", e=e)
+        if temp_image_path != final_image_path and os.path.exists(temp_image_path):
+            try:
+                os.remove(temp_image_path)
+                logger.info(f"删除临时文件: {temp_image_path}", "群聊语录")
+            except Exception as e:
+                logger.error(f"删除临时文件失败: {e}", "群聊语录", e=e)
 
-            quote = duplicate
-            is_new = False
-        else:
-            image_name = hashlib.md5(img_data).hexdigest() + ".png"
-            final_image_path = os.path.abspath(os.path.join(get_quote_path(), image_name))
-
-            if temp_image_path != final_image_path:
-                async with aiofiles.open(final_image_path, "wb") as f:
-                    await f.write(img_data)
-
-                if temp_image_path != image_path and os.path.exists(temp_image_path):
-                    try:
-                        os.remove(temp_image_path)
-                        logger.info(f"删除临时文件: {temp_image_path}", "群聊语录")
-                    except Exception as e:
-                        logger.error(f"删除临时文件失败: {e}", "群聊语录", e=e)
-
-            logger.info(f"图片已保存到 {final_image_path}", "群聊语录")
-
-            quote, is_new = await QuoteService.add_quote(
-                group_id=group_id,
-                image_path=final_image_path,
-                ocr_content=ocr_content,
-                recorded_text=None,
-                uploader_user_id=user_id,
-                image_hash=image_hash,
-            )
+        quote, is_new = await QuoteService.add_quote(
+            group_id=group_id,
+            image_path=str(final_image_path),
+            ocr_content=ocr_content,
+            recorded_text=None,
+            uploader_user_id=user_id,
+            image_hash=image_hash,
+        )
 
         if quote:
             if is_new:
@@ -211,6 +236,8 @@ async def save_img_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_
                     },
                 )
             else:
+                if os.path.exists(final_image_path):
+                    os.remove(final_image_path)
                 await bot.call_api(
                     "send_group_msg",
                     **{
@@ -237,345 +264,97 @@ async def save_img_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_
 
 @make_record_cmd.handle()
 async def make_record_handle(
-    bot: Bot, event: MessageEvent, arp: Arparma, state: T_State
+    bot: Bot, event: MessageEvent, arp: Arparma, session: Uninfo
 ):
-    """记录语录处理函数"""
-
-    qqid = None
-    raw_message = ""
-    card = ""
-    session_id = event.get_session_id()
-    user_id = str(event.get_user_id())
-
-    if event.reply:
-        qqid = event.reply.sender.user_id
-        raw_message = event.reply.message.extract_plain_text().strip()
-        card = (
-            event.reply.sender.card
-            if event.reply.sender.card
-            else event.reply.sender.nickname
-        )
-    else:
-        await make_record_cmd.finish("请回复所需的消息")
+    """记录语录处理函数 (重构后，先检查后渲染)"""
+    info, error = await _extract_info_from_reply(event, bot)
+    if error:
+        await make_record_cmd.finish(error)
         return
+
+    raw_message, card, qqid = info
+    user_id = session.user.id
 
     if str(qqid) == user_id:
         await make_record_cmd.finish("不能记录自己的消息")
         return
 
-    if not raw_message:
-        await make_record_cmd.send("空内容")
-        return
-
-    try:
-        data = await download_qq_avatar(qqid)
-        group_id = get_group_id_from_session(session_id)
-
-        if group_id:
-            recorded_text = card + " " + raw_message
-
-            img_data = await QuoteService.generate_temp_quote(
-                avatar_bytes=data,
-                text=raw_message,
-                author=card,
-                font_path=get_font_path(),
-                author_font_path=get_author_font_path(),
-                save_to_file=False,
-            )
-
-            duplicate_by_text = await QuoteService.check_duplicate_by_text(
-                group_id, recorded_text, str(qqid)
-            )
-
-            if duplicate_by_text:
-                logger.info("发现重复文本，不保存新图片", "群聊语录")
-                quote = duplicate_by_text
-                is_new = False
-            else:
-                image_name = hashlib.md5(img_data).hexdigest() + ".png"
-                image_path = os.path.abspath(os.path.join(get_quote_path(), image_name))
-
-                async with aiofiles.open(image_path, "wb") as file:
-                    await file.write(img_data)
-
-                quote, is_new = await QuoteService.add_quote(
-                    group_id=group_id,
-                    image_path=image_path,
-                    ocr_content=None,
-                    recorded_text=recorded_text,
-                    uploader_user_id=user_id,
-                    quoted_user_id=str(qqid),
-                )
-
-            if quote:
-                if is_new:
-                    msg_to_send = MessageSegment.image(img_data)
-                    await send_group_message(bot, group_id, msg_to_send)
-                else:
-                    await send_group_message(bot, group_id, "不要重复记录")
-            else:
-                await send_group_message(bot, group_id, "保存语录失败，数据库错误")
-        else:
-            img_data = await QuoteService.generate_temp_quote(
-                avatar_bytes=data,
-                text=raw_message,
-                author=card,
-                font_path=get_font_path(),
-                author_font_path=get_author_font_path(),
-                save_to_file=False,
-            )
-            msg_to_send = MessageSegment.image(img_data)
-            await bot.send_private_msg(
-                user_id=int(event.get_user_id()), message=msg_to_send
-            )
-    except NetworkError as e:
-        await make_record_cmd.finish(str(e))
-    except ImageProcessError as e:
-        await make_record_cmd.finish(str(e))
-    except Exception as e:
-        logger.error(f"生成语录图片失败: {e}", "群聊语录", e=e)
-        await make_record_cmd.finish(f"生成语录图片失败: {e}")
-
-
-@render_quote_cmd.handle()
-async def render_quote_handle(
-    bot: Bot, event: MessageEvent, arp: Arparma, state: T_State
-):
-    """生成语录处理函数"""
-
-    qqid = None
-    raw_message = ""
-    card = ""
-    session_id = event.get_session_id()
-
-    if event.reply:
-        qqid = event.reply.sender.user_id
-        raw_message = event.reply.message.extract_plain_text().strip()
-        card = (
-            event.reply.sender.card
-            if event.reply.sender.card
-            else event.reply.sender.nickname
+    if session.group:
+        recorded_text = f"{card} {raw_message}"
+        is_duplicate = await QuoteService.check_duplicate_text_quote(
+            group_id=session.group.id,
+            recorded_text=recorded_text,
+            quoted_user_id=str(qqid),
         )
-    else:
-        await render_quote_cmd.finish("请回复所需的消息")
-        return
-
-    if not raw_message:
-        await render_quote_cmd.send("空内容")
-        return
-
-    try:
-        data = await download_qq_avatar(qqid)
-
-        img_data = await QuoteService.generate_temp_quote(
-            avatar_bytes=data,
-            text=raw_message,
-            author=card,
-            font_path=get_font_path(),
-            author_font_path=get_author_font_path(),
-            save_to_file=True,
-        )
-
-        msg_to_send = MessageSegment.image(img_data)
-
-        group_id = get_group_id_from_session(session_id)
-
-        if group_id:
-            await send_group_message(bot, group_id, msg_to_send)
-        else:
-            await bot.send_private_msg(
-                user_id=int(event.get_user_id()), message=msg_to_send
-            )
-    except NetworkError as e:
-        await render_quote_cmd.finish(str(e))
-    except ImageProcessError as e:
-        await render_quote_cmd.finish(str(e))
-    except Exception as e:
-        logger.error(f"生成语录图片失败: {e}", "群聊语录", e=e)
-        await render_quote_cmd.finish(f"生成语录图片失败: {e}")
-
-
-@script_batch_cmd.handle()
-async def script_batch_handle(bot: Bot, event: Event, arp: Arparma, state: T_State):
-    """批量上传语录处理函数"""
-    session_id = event.get_session_id()
-    user_id = str(event.get_user_id())
-
-    if "group" not in session_id:
-        await script_batch_cmd.finish("该功能暂不支持私聊")
-        return
-
-    group_id = session_id.split("_")[1]
-
-    content_list: list[str] = arp.all_matched_args.get("content", [])
-    raw_msg = "\n".join(content_list) if content_list else ""
-
-    qqgroup_match = re.search(r"qqgroup=([^\n\s]+)", raw_msg)
-    your_path_match = re.search(r"your_path=([^\n\s]+)", raw_msg)
-    gocq_path_match = re.search(r"gocq_path=([^\n\s]+)", raw_msg)
-    tags_match = re.search(r"tags=([^\n]+)", raw_msg)
-
-    group_id_list = [qqgroup_match.group(1)] if qqgroup_match else []
-    your_path_list = [your_path_match.group(1)] if your_path_match else []
-    gocq_path_list = [gocq_path_match.group(1)] if gocq_path_match else []
-    tags_list_parsed = [tags_match.group(1).strip()] if tags_match else []
-
-    instruction = """指令如下:
-batch_upload
-qqgroup=123456
-your_path=/home/xxx/images
-gocq_path=/home/xxx/gocq/data/cache
-tags=aaa bbb ccc"""
-    if not group_id_list or not your_path_list or not gocq_path_list:
-        await script_batch_cmd.finish(instruction)
-        return
-
-    target_group_id_str = group_id_list[0]
-    your_path_str = your_path_list[0]
-    gocq_path_str = gocq_path_list[0]
-
-    image_files = await copy_images_files(your_path_str, gocq_path_str)
-    total_len = len(image_files)
-    idx = 0
-
-    for _, img_rel_path in image_files:
-        img_full_path = os.path.join(gocq_path_str, img_rel_path)
-        save_file = os.path.abspath(img_full_path)
-
-        idx += 1
-        try:
-            logger.info(f"尝试使用绝对路径发送图片: {save_file}")
-            await bot.send_msg(
-                group_id=int(group_id),
-                message=MessageSegment.image(f"file:///{save_file}"),
-            )
-            logger.info(f"图片 {img_rel_path} 发送成功 (for preview)")
-        except Exception as send_err:
-            logger.error(
-                f"预览图片 {img_rel_path} (路径: {save_file}) 发送失败: {send_err}",
-                exc_info=True,
-            )
-            await bot.send_msg(
-                group_id=int(group_id),
-                message=f"图片 {img_rel_path} 预览发送失败，跳过此图处理。",
-            )
-            continue
-
-        await asyncio.sleep(1)
-
-        image_hash = await get_img_hash(save_file)
-
-        duplicate = await QuoteService.check_duplicate_by_hash(
-            target_group_id_str, image_hash
-        )
-
-        if duplicate:
-            logger.info(
-                f"图片 {save_file} 已存在于群 {target_group_id_str} 的数据库中，跳过。"
-            )
-            await bot.send_msg(
-                group_id=int(group_id), message="上述图片已存在于目标语录库"
-            )
-            continue
-        else:
-            logger.info(
-                f"图片 {save_file} 不在群 {target_group_id_str} 的数据库中，继续处理。"
-            )
-
-        ocr_content = await OCRService.recognize_text(save_file)
-
-        quote, is_new = await QuoteService.add_quote(
-            group_id=target_group_id_str,
-            image_path=save_file,
-            ocr_content=ocr_content,
-            recorded_text=None,
-            uploader_user_id=user_id,
-            image_hash=image_hash,
-        )
-
-        if quote:
-            if is_new:
-                logger.info(
-                    f"图片 {save_file} 已添加到群 {target_group_id_str} 的数据库中。"
-                )
-
-                if tags_list_parsed:
-                    tag_list_for_image = tags_list_parsed[0].strip().split(" ")
-                    success = await QuoteService.add_tags(quote, tag_list_for_image)
-                    if success:
-                        logger.info(
-                            f"为图片 {save_file} 添加标签: {tag_list_for_image}"
-                        )
-                    else:
-                        logger.warning(f"为图片 {save_file} 添加标签失败")
-            else:
-                logger.warning(
-                    f"图片 {save_file} 已存在于群 {target_group_id_str} 的数据库中，跳过。"
-                )
-                continue
-        else:
-            logger.error(f"图片 {save_file} 添加到数据库失败")
-            await bot.send_msg(
-                group_id=int(group_id),
-                message=f"图片 {img_rel_path} 添加到数据库失败，跳过。",
-            )
-            continue
-
-        if idx % 10 == 0:
-            logger.info(f"处理进度 {idx}/{total_len}")
-            await bot.send_msg(
-                group_id=int(group_id), message=f"当前进度{idx}/{total_len}"
-            )
-            await asyncio.sleep(1)
-
-    await bot.send_msg(group_id=int(group_id), message="批量导入完成")
-
-
-@copy_batch_cmd.handle()
-async def copy_batch_handle(bot: Bot, event: Event, arp: Arparma, state: T_State):
-    """批量备份语录处理函数"""
-    content_list: list[str] = arp.all_matched_args.get("content", [])
-    raw_msg = "\n".join(content_list) if content_list else ""
-
-    your_path_match = re.search(r"your_path=([^\n\s]+)", raw_msg)
-    your_path_list = [your_path_match.group(1)] if your_path_match else []
-
-    instruction = """指令如下:
-batch_copy
-your_path=/home/xxx/images"""
-    if not your_path_list:
-        await copy_batch_cmd.finish(instruction)
-        return
-
-    your_path_str = your_path_list[0]
-
-    try:
-        all_quotes = await QuoteService.get_all_quotes()
-
-        if not all_quotes:
-            await copy_batch_cmd.finish("数据库中没有语录")
+        if is_duplicate:
+            await MessageUtils.build_message("不要重复记录").send(target=event, bot=bot)
             return
 
-        for quote in all_quotes:
-            img_full_path = quote.image_path
-            if not os.path.exists(img_full_path):
-                logger.warning(
-                    f"Source image {img_full_path} not found, skipping copy."
-                )
-                continue
+    style_name: str | None = arp.query("style.style_name")
+    if style_name:
+        logger.info(f"用户请求使用主题: {style_name}", "群聊语录")
 
-            img_basename = os.path.basename(img_full_path)
-            destination_full_path = os.path.join(your_path_str, img_basename)
-
-            shutil.copyfile(img_full_path, destination_full_path)
-            logger.info(f"Copied {img_full_path} to {destination_full_path}")
-
-    except FileNotFoundError:
-        await copy_batch_cmd.finish("路径不正确或文件不存在")
+    try:
+        avatar_data = await download_qq_avatar(qqid)
+        img_data = await QuoteService.generate_temp_quote(
+            avatar_bytes=avatar_data,
+            text=raw_message,
+            author=card,
+            save_to_file=False,
+            style_name=style_name,
+        )
+    except (NetworkError, ImageProcessError) as e:
+        await make_record_cmd.finish(f"生成语录图片时出错: {e}")
         return
     except Exception as e:
-        logger.error(f"批量备份发生错误: {e}", exc_info=True)
-        await copy_batch_cmd.finish(f"备份过程中发生错误: {e}")
+        logger.error(f"生成语录图片时发生未知错误: {e}", "群聊语录", e=e)
+        await make_record_cmd.finish(f"生成语录图片时发生未知错误: {e}")
         return
 
-    await copy_batch_cmd.finish("备份完成")
+    if session.group:
+        image_name = hashlib.md5(img_data).hexdigest() + ".png"
+        image_path = ensure_quote_path() / image_name
+
+        async with aiofiles.open(image_path, "wb") as file:
+            await file.write(img_data)
+
+        quote, is_new = await QuoteService.add_quote(
+            group_id=session.group.id,
+            image_path=str(image_path),
+            ocr_content=None,
+            recorded_text=recorded_text,
+            uploader_user_id=user_id,
+            quoted_user_id=str(qqid),
+        )
+
+        if quote and is_new:
+            await MessageUtils.build_message(img_data).send(target=event, bot=bot)
+        else:
+            if os.path.exists(image_path):
+                os.remove(image_path)
+            await MessageUtils.build_message("保存语录时发生意外，请稍后再试").send(
+                target=event, bot=bot
+            )
+    else:
+        await MessageUtils.build_message(img_data).send(target=event, bot=bot)
+
+
+@generate_quote_cmd.handle()
+async def generate_quote_handle(bot: Bot, event: MessageEvent, arp: Arparma):
+    """
+    生成语录处理函数。
+    只生成图片并发送，不进行任何存储或数据库操作。
+    """
+    style_name: str | None = arp.query("style.style_name")
+    if style_name:
+        logger.info(f"用户请求使用主题 '{style_name}' 生成临时语录", "群聊语录")
+
+    result, error = await _generate_quote_from_reply(event, bot, style_name)
+
+    if error:
+        await generate_quote_cmd.finish(error)
+        return
+
+    img_data, _, _, _ = result
+
+    await MessageUtils.build_message(img_data).send(target=event, bot=bot)

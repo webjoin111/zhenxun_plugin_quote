@@ -8,15 +8,7 @@ from .image_utils import (
     get_img_md5,
     save_image_from_url,
 )
-from .message_utils import (
-    extract_image_basename_from_reply,
-    extract_image_from_message_id,
-    extract_image_from_reply,
-    get_group_id_from_session,
-    get_reply_message_id,
-    reply_handle,
-    send_group_message,
-)
+# message_utils 中的所有函数都已被废弃
 
 __all__ = [
     "ImageProcessError",
@@ -26,15 +18,8 @@ __all__ = [
     "convert_image_to_png",
     "copy_images_files",
     "download_qq_avatar",
-    "extract_image_basename_from_reply",
-    "extract_image_from_message_id",
-    "extract_image_from_reply",
-    "get_group_id_from_session",
     "get_img_hash",
     "get_img_hash_from_bytes",
     "get_img_md5",
-    "get_reply_message_id",
-    "reply_handle",
     "save_image_from_url",
-    "send_group_message",
 ]

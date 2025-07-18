@@ -24,17 +24,12 @@ async def download_qq_avatar(qqid: str | int) -> bytes:
     try:
         logger.info(f"开始获取QQ头像: {qqid_str}", "群聊语录")
         data = await PlatformUtils.get_user_avatar(qqid_str, "qq")
+        
         if not data:
-            logger.warning(f"获取QQ头像失败: {qqid_str}", "群聊语录")
+            logger.warning(f"获取QQ头像失败 (返回为空): {qqid_str}", "群聊语录")
             raise NetworkError("获取头像失败")
-
-        if hashlib.md5(data).hexdigest() == DEFAULT_AVATAR_MD5:
-            logger.info(f"检测到默认头像，尝试使用较小尺寸: {qqid_str}", "群聊语录")
-            url = f"http://q1.qlogo.cn/g?b=qq&nk={qqid_str}&s=100"
-            data = await AsyncHttpx.get_content(url)
-            if not data:
-                logger.warning(f"获取较小尺寸头像失败: {qqid_str}", "群聊语录")
-                raise NetworkError("获取头像失败")
+        
+        
         logger.info(f"QQ头像获取成功: {qqid_str}", "群聊语录")
         return data
     except Exception as e:
@@ -42,23 +37,26 @@ async def download_qq_avatar(qqid: str | int) -> bytes:
         raise NetworkError(f"下载QQ头像失败: {e}")
 
 
+
 async def save_image_from_url(url: str, save_path: str | Path) -> str:
     """下载并保存图片"""
     try:
         logger.info(f"开始下载图片: {url}", "群聊语录")
-        content = await AsyncHttpx.get_content(url)
-        if content:
-            random_filename = f"{hashlib.md5(url.encode()).hexdigest()}.png"
-            save_path = Path(save_path)
-            save_path.mkdir(parents=True, exist_ok=True)
-            image_path = save_path / random_filename
-            async with aiofiles.open(image_path, "wb") as f:
-                await f.write(content)
+
+        random_filename = f"{hashlib.md5(url.encode()).hexdigest()}.png"
+        save_path = Path(save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
+        image_path = save_path / random_filename
+
+        success = await AsyncHttpx.download_file(url, image_path)
+
+        if success:
             logger.info(f"图片下载成功，保存至: {image_path}", "群聊语录")
             return str(image_path)
         else:
-            logger.warning(f"下载图片失败: {url}", "群聊语录")
-            raise NetworkError("下载失败，未获取到内容")
+            logger.warning(f"下载图片失败 (download_file 返回 False): {url}", "群聊语录")
+            raise NetworkError("下载失败，未获取到内容或保存失败")
+
     except Exception as e:
         logger.error(f"下载或保存图片失败: {e}", "群聊语录", e=e)
         raise NetworkError(f"下载或保存图片失败: {e}")
@@ -77,41 +75,39 @@ async def get_img_md5(img_path: str | Path) -> str:
     return md5
 
 
-async def get_img_hash(img_path: str | Path) -> str:
-    """计算图片的感知哈希值"""
+async def _calculate_phash(img_data: bytes) -> str:
+    """内部函数：从字节数据计算图片的感知哈希值"""
     try:
-        img_path = Path(img_path)
-        if not img_path.exists():
-            logger.error(f"图片文件不存在: {img_path}", "群聊语录")
-            return ""
-
-        logger.info(f"计算图片哈希值: {img_path}", "群聊语录")
-        async with aiofiles.open(img_path, "rb") as f:
-            img_data = await f.read()
-
         img = Image.open(io.BytesIO(img_data))
-
         phash = str(imagehash.phash(img))
         logger.info(f"图片哈希值计算成功: {phash}", "群聊语录")
         return phash
     except Exception as e:
-        logger.error(f"计算图片哈希值失败: {e}", "群聊语录", e=e)
+        logger.error(f"从字节流计算图片哈希值失败: {e}", "群聊语录", e=e)
+        return ""
+
+
+async def get_img_hash(img_path: str | Path) -> str:
+    """计算图片的感知哈希值 (phash)"""
+    img_path = Path(img_path)
+    if not img_path.exists():
+        logger.error(f"图片文件不存在: {img_path}", "群聊语录")
+        return ""
+
+    logger.info(f"正在读取图片文件以计算哈希: {img_path}", "群聊语录")
+    try:
+        async with aiofiles.open(img_path, "rb") as f:
+            img_data = await f.read()
+        return await _calculate_phash(img_data)
+    except Exception as e:
+        logger.error(f"读取图片文件失败: {e}", "群聊语录", e=e)
         return ""
 
 
 async def get_img_hash_from_bytes(img_data: bytes) -> str:
-    """从字节数据计算图片哈希值"""
-    try:
-        logger.info("计算图片字节数据的哈希值", "群聊语录")
-
-        img = Image.open(io.BytesIO(img_data))
-
-        phash = str(imagehash.phash(img))
-        logger.info(f"图片哈希值计算成功: {phash}", "群聊语录")
-        return phash
-    except Exception as e:
-        logger.error(f"计算图片哈希值失败: {e}", "群聊语录", e=e)
-        return ""
+    """从字节数据计算图片哈希值 (phash)"""
+    logger.info("正在从字节数据计算图片哈希值", "群聊语录")
+    return await _calculate_phash(img_data)
 
 
 async def convert_image_to_png(image_path: str | Path) -> bytes:
