@@ -3,18 +3,18 @@ from nonebot.plugin import PluginMetadata
 
 from zhenxun.configs.utils import PluginExtraData, RegisterConfig
 from zhenxun.services.log import logger
-from .command.manage_commands import (
-    addtag_cmd,
+from .command.manage_commands import ( # noqa: F401
+    addtag_cmd,  
     adv_delete_cmd,
     delete_record,
     deltag_cmd,
 )
-from .command.query_commands import (
+from .command.query_commands import ( # noqa: F401
     alltag_cmd,
     quote_stats_cmd,
     record_pool,
 )
-from .command.upload_commands import (
+from .command.upload_commands import ( # noqa: F401
     generate_quote_cmd,
     make_record_cmd,
     save_img_cmd,
@@ -176,16 +176,13 @@ __plugin_meta__ = PluginMetadata(
 
 
 try:
-    import sys
-    from zhenxun.services.db_context import MODELS
+    from zhenxun.services.cache import CacheRegistry
+    from .model import Quote, QUOTE_CACHE_TYPE
 
-    current_module = sys.modules[__name__]
-    model_path = f"{current_module.__package__}.model"
+    CacheRegistry.register(QUOTE_CACHE_TYPE, Quote)
+    logger.info(f"Quote 插件缓存类型 ({QUOTE_CACHE_TYPE}) 注册成功", "群聊语录")
 
-    if model_path not in MODELS:
-        MODELS.append(model_path)
-        logger.info(f"Quote 模型已添加到 MODELS 列表: {model_path}", "群聊语录")
 except ImportError:
-    logger.error("无法导入 zhenxun.services.db_context，Quote 模型注册失败", "群聊语录")
+    logger.error("无法导入 zhenxun.services.cache，Quote 插件缓存注册失败", "群聊语录")
 except Exception as e:
-    logger.error(f"注册 Quote 模型失败: {e}", "群聊语录", e=e)
+    logger.error(f"注册 Quote 插件缓存失败: {e}", "群聊语录", e=e)
