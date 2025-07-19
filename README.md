@@ -173,7 +173,7 @@
 
 您可以通过两种方式来控制字体，它们有不同的优先级：
 
-#### 方式一：全局默认字体 (WebUI 配置 & Config.yaml文件)
+#### 方式一：全局默认字体 (WebUI 配置 & config.yaml文件)
 
 在真寻后台 **[插件配置] -> [quote]** 页面，您可以设置全局默认字体：
 
@@ -209,14 +209,44 @@
 
 本插件的特色之一就是基于HTML的强大主题系统。您可以轻松创造属于自己风格的语录卡片。
 
-#### 主题结构
+### 🖼️ 内置主题预览
+
+插件内置了三种精美主题，每种都有独特的视觉风格：
+
+#### 📖 Classic (经典黑)
+<div align="center">
+  <img src="./image/classic.png" alt="经典黑主题预览" width="400"/>
+</div>
+
+- **风格**: 简洁优雅的黑色主题
+- **特点**: 经典的设计，适合各种场景
+- **主题ID**: `classic`
+
+#### 🌌 Classic-Blue (深空蓝)
+<div align="center">
+  <img src="./image/classic-blue.png" alt="深空蓝主题预览" width="400"/>
+</div>
+
+- **风格**: 现代科技感的深蓝色主题
+- **特点**: 深邃的蓝色背景，营造科技感氛围
+- **主题ID**: `classic-blue`
+
+#### ✍️ Handwritten (手写回忆)
+<div align="center">
+  <img src="./image/handwritten.png" alt="手写回忆主题预览" width="400"/>
+</div>
+
+- **风格**: 温馨的手写字体主题
+- **特点**: 使用手写字体，营造温暖回忆的感觉
+- **主题ID**: `handwritten`
+
+### 📁 主题结构
 -   所有主题都存放在 `quote/assets/themes/` 目录下。
 -   每个主题是一个独立的文件夹，文件夹名即为**主题ID**。
 -   一个典型的主题包含：
     -   `theme.json`: 主题的配置文件
     -   `template.html`: Jinja2模板文件，定义卡片结构。
     -   `styles.css`: 样式文件。
-    -   (可选) `*.ttf`/`*.otf`: 主题专属的字体文件。
 
 #### `theme.json` 详解
 ```json
