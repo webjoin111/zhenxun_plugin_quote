@@ -258,23 +258,35 @@ class QuoteService:
     ) -> list[Quote]:
         """
         分阶段搜索语录：
-        1. 在数据库中根据文本内容进行模糊搜索。
-        2. 在应用层面对结果进行标签的模糊匹配过滤。
+        1. [精确匹配] 首先尝试匹配完整的关键词。
+        2. [模糊匹配] 如果没有精确匹配结果，则回退到分词模糊搜索。
         """
         base_filters = {"group_id": group_id}
         if user_id_filter:
             base_filters["quoted_user_id"] = user_id_filter
 
+        logger.info(
+            f"第一阶段：尝试对 '{keyword}' 进行精确匹配搜索...", "群聊语录-搜索"
+        )
+        exact_match_query = Q(ocr_text__icontains=keyword) | Q(
+            recorded_text__icontains=keyword
+        )
+        exact_matches = await quote_dao.filter(exact_match_query, **base_filters)
+
+        if exact_matches:
+            logger.info(
+                f"精确匹配成功，找到 {len(exact_matches)} 条语录。", "群聊语录-搜索"
+            )
+            return exact_matches
+
+        logger.info("精确匹配未找到结果，回退到分词模糊搜索...", "群聊语录-搜索")
         keywords = [k.strip() for k in keyword.split() if k.strip()]
         if not keywords:
             return []
 
-        logger.info(f"两阶段搜索 - 关键词列表: {keywords}", "群聊语录")
-
         text_query_condition = Q()
         for kw in keywords:
             kw_tokens = cls.cut_sentence(kw)
-
             single_kw_text_condition = Q(ocr_text__icontains=kw) | Q(
                 recorded_text__icontains=kw
             )
@@ -285,30 +297,18 @@ class QuoteService:
             text_query_condition &= single_kw_text_condition
 
         candidate_quotes = await quote_dao.filter(text_query_condition, **base_filters)
-
         logger.debug(
-            f"数据库文本搜索初步匹配到 {len(candidate_quotes)} 条语录", "群聊语录"
+            f"数据库模糊搜索初步匹配到 {len(candidate_quotes)} 条语录", "群聊语录"
         )
-
         if not candidate_quotes:
             return []
 
         final_matches = []
         for quote in candidate_quotes:
-            tags_to_check = quote.tags if isinstance(quote.tags, list) else []
-            if not tags_to_check:
-                if all(
-                    cls._check_single_keyword_in_quote(kw, quote) for kw in keywords
-                ):
-                    final_matches.append(quote)
-                continue
-
             if all(cls._check_single_keyword_in_quote(kw, quote) for kw in keywords):
                 final_matches.append(quote)
 
-        logger.debug(
-            f"经过标签过滤后，最终匹配到 {len(final_matches)} 条语录", "群聊语录"
-        )
+        logger.debug(f"经过最终过滤后，匹配到 {len(final_matches)} 条语录", "群聊语录")
         return final_matches
 
     @classmethod
@@ -883,78 +883,9 @@ class QuoteService:
         cut_words = seg.cut(text)
         cut_words = list(set(cut_words))
 
-        remove_set = {
-            ".",
-            ",",
-            "!",
-            "?",
-            ":",
-            ";",
-            "。",
-            "，",
-            "！",
-            "？",
-            "：",
-            "；",
-            "%",
-            "$",
-            "\n",
-            " ",
-            "[",
-            "]",
-            "(",
-            ")",
-            "（",
-            "）",
-            "《",
-            "》",
-            "<",
-            ">",
-            "「",
-            "」",
-            """, """,
-            "'",
-            "'",
-            "-",
-            "_",
-            "+",
-            "=",
-            "*",
-            "&",
-            "^",
-            "#",
-            "@",
-            "~",
-            "`",
-            "的",
-            "了",
-            "是",
-            "在",
-            "我",
-            "有",
-            "和",
-            "就",
-            "不",
-            "人",
-            "都",
-            "一",
-            "一个",
-            "上",
-            "也",
-            "很",
-            "到",
-            "说",
-            "要",
-            "去",
-            "你",
-            "会",
-            "着",
-            "没有",
-            "看",
-            "好",
-            "自己",
-            "这",
-        }
+        punctuation = ".,!?:;。，！？：；%$\n []()（）《》<>「」""'''-_+=*&^#@~`"
+        stopwords = ["的", "了", "是", "在", "我", "有", "和", "就", "不", "人", "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好", "自己", "这"]
+        remove_set = set(punctuation) | set(stopwords)
 
         new_words = [
             word
