@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import aiofiles
 from nonebot_plugin_htmlrender import template_to_pic
+from nonebot.compat import model_dump
 from PIL import Image
 
 from zhenxun.services.log import logger
@@ -41,8 +42,12 @@ class ImageService:
                 "author": author,
                 "palette": theme_data.palette,
                 "style_path": theme_data.style_path.as_uri(),
-                "text_font_face_src": theme_data.text_font_path.as_uri() if theme_data.text_font_path else None,
-                "author_font_face_src": theme_data.author_font_path.as_uri() if theme_data.author_font_path else None,
+                "text_font_face_src": theme_data.text_font_path.as_uri()
+                if theme_data.text_font_path
+                else None,
+                "author_font_face_src": theme_data.author_font_path.as_uri()
+                if theme_data.author_font_path
+                else None,
             }
 
             img_data = await template_to_pic(
@@ -50,7 +55,7 @@ class ImageService:
                 template_name=theme_data.template_path.name,
                 templates=template_data,
                 pages={
-                    "viewport": theme_data.viewport.model_dump(),
+                    "viewport": model_dump(theme_data.viewport),
                     "base_url": theme_data.template_path.parent.as_uri(),
                 },
                 wait=0.2,

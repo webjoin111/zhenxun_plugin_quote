@@ -3,8 +3,9 @@ import json
 
 from zhenxun.configs.config import Config
 from zhenxun.services.log import logger
-from zhenxun.services.llm import analyze_multimodal, LLMException, get_model_instance
+from zhenxun.services.llm import chat, LLMException, get_model_instance
 from zhenxun.services.llm.types import LLMResponse
+from nonebot_plugin_alconna.uniseg import UniMessage, Text, Image
 
 
 class AIService:
@@ -68,8 +69,15 @@ class AIService:
                 f"使用模型 '{cls._model_name}' 进行AI-OCR识别: {image_path}",
                 "群聊语录-AI",
             )
-            response = await analyze_multimodal(
-                text=prompt, images=[Path(image_path)], model=cls._model_name
+
+            message_to_analyze = UniMessage(
+                [Text(prompt), Image(path=Path(image_path))]
+            )
+
+            response = await chat(
+                message=message_to_analyze,
+                model=cls._model_name,
+                instruction="你是一位专业的AI分析助手。请深入、全面地分析用户提供的所有内容（包括文本、图片、文件等），并给出结论。",
             )
 
             if isinstance(response, LLMResponse):
