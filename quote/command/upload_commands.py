@@ -39,12 +39,10 @@ from ..utils.image_utils import get_img_hash, get_img_hash_from_bytes
 from zhenxun.services import avatar_service
 
 
-def _is_simple_text_message(uni_message: UniMessage, has_nested_reply: bool) -> bool:
+def _is_simple_text_message(uni_message: UniMessage) -> bool:
     """
     判断消息是否为“简单纯文本”（可包含@）。
     """
-    if has_nested_reply:
-        return False
     if not uni_message:
         return False
 
@@ -94,10 +92,6 @@ async def _process_nested_reply(
     """
     检查消息段中是否存在对另一条消息的回复（即"引用中的引用"），
     如果存在，则处理并返回一个 QuotedReplyData 对象。
-
-    :param message_array: 从 get_msg API 获取的原始消息段列表。
-    :param bot: Bot 实例。
-    :return: QuotedReplyData 对象或 None。
     """
     try:
         if not isinstance(message_array, list):
@@ -691,6 +685,12 @@ async def _handle_quote_generation(
         if issuer_user_id and not allow_self_record and str(qqid) == issuer_user_id:
             return None, None, None, "不允许记录自己的消息，如需开启请联系管理员。"
 
+        replied_msg_id = cast(int, event.reply.message_id)
+        full_replied_msg_info = await bot.get_msg(message_id=replied_msg_id)
+        message_array = full_replied_msg_info.get("message", [])
+        quoted_reply_data = await _process_nested_reply(message_array, bot)
+        has_nested_reply = quoted_reply_data is not None
+
         if user_variant and user_variant.isdigit():
             try:
                 theme_index = int(user_variant)
@@ -711,11 +711,9 @@ async def _handle_quote_generation(
             final_variant = user_variant
         else:
             final_variant = None
-            is_simple_text = _is_simple_text_message(
-                uni_message, has_nested_reply=False
-            )
+            is_simple_text = _is_simple_text_message(uni_message)
 
-            if is_simple_text:
+            if is_simple_text and not has_nested_reply:
                 text_only_theme = Config.get_config(
                     "quote", "QUOTE_TEXT_ONLY_THEME", ""
                 )
@@ -742,7 +740,7 @@ async def _handle_quote_generation(
             return None, None, None, error_render
 
         assert result is not None
-        img_data, _, _, quoted_reply_data = result
+        img_data, _, _, _ = result
 
         if quoted_reply_data:
             quoted_text_parts = []
