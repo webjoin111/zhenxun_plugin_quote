@@ -1,6 +1,6 @@
 import os
 from typing import Optional, Literal, Union
-
+from nonebot.permission import SUPERUSER
 from arclet.alconna import Alconna, Args, Arparma, MultiVar, Option, Subcommand
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -111,8 +111,6 @@ async def _(bot: Bot, event: MessageEvent, arp: Arparma, session: Uninfo):
             return
         await handle_delete_record(bot, event, session)
     elif arp.find("manager"):
-        from nonebot.permission import SUPERUSER
-
         if not await SUPERUSER(bot, event):
             await quote_manage_cmd.finish("抱歉，只有超级用户才能使用高级管理功能。")
             return
@@ -188,13 +186,13 @@ async def handle_theme(bot: Bot, event: MessageEvent, arp: Arparma, session: Uni
         except (ValueError, IndexError):
             pass
 
-    if not await admin_check(2)(bot, event, session):
-        await quote_manage_cmd.finish("抱歉，只有管理员才能切换群聊的语录主题。")
+    if not await SUPERUSER(bot, event):
+        await quote_manage_cmd.finish("抱歉，只有超级用户才能切换语录主题。")
         return
 
     if theme_name in available_themes:
         Config.set_config("quote", "QUOTE_THEME", theme_name, auto_save=True)
-        await quote_manage_cmd.finish(f"本群语录主题已切换为: {theme_name}")
+        await quote_manage_cmd.finish(f"语录主题已切换为: {theme_name}")
     else:
         await quote_manage_cmd.finish(
             f"主题 '{theme_name_or_index}' 不存在。可用主题有: {', '.join(sorted(available_themes))}"
