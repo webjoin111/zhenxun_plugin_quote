@@ -107,6 +107,8 @@ class OCRService:
 
         def _recognize():
             try:
+                if cls._engine_instance is None:
+                    return ""
                 result = cls._engine_instance.readtext(image_path)
                 text = " ".join([item[1] for item in result]) if result else ""
                 return text
@@ -128,6 +130,8 @@ class OCRService:
 
         def _recognize():
             try:
+                if cls._engine_instance is None:
+                    return ""
                 result = cls._engine_instance.ocr(image_path)
                 if result and result[0]:
                     text = " ".join([item[1][0] for item in result[0]])

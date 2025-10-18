@@ -1,8 +1,7 @@
-import os
 from pathlib import Path
 
 from zhenxun.configs.config import Config
-from zhenxun.configs.path_config import DATA_PATH, FONT_PATH
+from zhenxun.configs.path_config import DATA_PATH
 from zhenxun.services.log import logger
 
 QUOTE_ASSETS_PATH = Path(__file__).parent / "assets"
@@ -72,5 +71,3 @@ def ensure_directory_exists(dir_path: str | Path) -> Path:
     except (OSError, PermissionError) as e:
         logger.error(f"创建目录失败: {dir_path}, 错误: {e}", "群聊语录")
         raise
-
-

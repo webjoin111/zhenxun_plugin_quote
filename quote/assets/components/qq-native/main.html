@@ -1,0 +1,49 @@
+<div class="quote-card-qq-native">
+    <div class="avatar-container">
+        <img src="{{ data.avatar_data_url }}" alt="avatar" class="avatar" />
+    </div>
+    <div class="content-wrapper">
+        <div class="author-info">
+            <span class="author-name">{{ data.author }}</span>
+            {% if data.author_title %}
+            <div class="title-level-badge has-custom-title">
+                {% if data.author_level %}<span class="author-level">{{ data.author_level }}</span>{% endif %}
+                <span class="author-title">{{ data.author_title }}</span>
+            </div>
+            {% elif data.author_role in ['owner', 'admin'] or data.author_level %}
+            <div class="title-level-badge role-{{ data.author_role }}">
+                {% if data.author_level %}<span class="author-level">{{ data.author_level }}</span>{% endif %}
+                {% if data.author_role in ['owner', 'admin'] %}
+                <span class="author-title">{{ '群主' if data.author_role == 'owner' else '管理员' }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        <div class="message-bubble">
+            {% if data.quoted_reply %}
+            <div class="quoted-reply-container">
+                <div class="quoted-reply-header">
+                    <img src="{{ data.quoted_reply.avatar_data_url }}" class="quoted-reply-avatar" alt="avatar" />
+                    <span class="quoted-reply-author">{{ data.quoted_reply.author }}</span>
+                </div>
+                <div class="quoted-reply-content">
+                    {% for segment in data.quoted_reply.text %}
+                    {% if segment.type == 'text' %}
+                    <span class="quoted-reply-text">{{ segment.value }}</span>
+                    {% elif segment.type == 'image' %}
+                    <img src="{{ segment.value }}" class="quoted-reply-image" alt="image" />
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            {%- for segment in data.text -%}
+            {%- if segment.type == 'text' -%}
+            <div class="message-text">{{ segment.value | safe }}</div>
+            {%- elif segment.type == 'image' -%}
+            <img src="{{ segment.value }}" class="message-image" alt="image" />
+            {%- endif -%}
+            {%- endfor -%}
+        </div>
+    </div>
+</div>

@@ -1,0 +1,36 @@
+{% extends 'partials/_base.html' %}
+
+{% block page_styles %}
+{% endblock %}
+
+{% block body_content %}
+    <div class="quote-card-single">
+      <div class="avatar-container">
+        <img src="{{ data.avatar_data_url }}" alt="avatar" class="avatar" />
+      </div>
+      <div class="content-container">
+        <div class="text-content">「{%- for segment in data.text -%}
+          {%- if segment.type == 'text' -%}
+              {{ segment.value | safe }}
+          {%- endif -%}
+        {%- endfor -%}」</div>
+        <div class="author">— {{ data.author }}</div>
+      </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const textElement = document.querySelector('.text-content');
+            const containerElement = document.querySelector('.content-container');
+            if (!textElement || !containerElement) return;
+
+            let fontSize = parseFloat(window.getComputedStyle(textElement).fontSize);
+            const minFontSize = 12;
+
+            while (containerElement.scrollHeight > containerElement.clientHeight && fontSize > minFontSize) {
+                fontSize -= 1;
+                textElement.style.fontSize = fontSize + 'px';
+            }
+        });
+    </script>
+{% endblock %}

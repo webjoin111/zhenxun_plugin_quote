@@ -9,33 +9,11 @@ from PIL import Image
 
 from zhenxun.services.log import logger
 from zhenxun.utils.http_utils import AsyncHttpx
-from zhenxun.utils.platform import PlatformUtils
 
 from .exceptions import NetworkError
 
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif"]
 DEFAULT_AVATAR_MD5 = "acef72340ac0e914090bd35799f5594e"
-
-
-async def download_qq_avatar(qqid: str | int) -> bytes:
-    """下载QQ头像"""
-    qqid_str = str(qqid)
-
-    try:
-        logger.info(f"开始获取QQ头像: {qqid_str}", "群聊语录")
-        data = await PlatformUtils.get_user_avatar(qqid_str, "qq")
-        
-        if not data:
-            logger.warning(f"获取QQ头像失败 (返回为空): {qqid_str}", "群聊语录")
-            raise NetworkError("获取头像失败")
-        
-        
-        logger.info(f"QQ头像获取成功: {qqid_str}", "群聊语录")
-        return data
-    except Exception as e:
-        logger.error(f"下载QQ头像失败: {e}", "群聊语录", e=e)
-        raise NetworkError(f"下载QQ头像失败: {e}")
-
 
 
 async def save_image_from_url(url: str, save_path: str | Path) -> str:
@@ -54,7 +32,9 @@ async def save_image_from_url(url: str, save_path: str | Path) -> str:
             logger.info(f"图片下载成功，保存至: {image_path}", "群聊语录")
             return str(image_path)
         else:
-            logger.warning(f"下载图片失败 (download_file 返回 False): {url}", "群聊语录")
+            logger.warning(
+                f"下载图片失败 (download_file 返回 False): {url}", "群聊语录"
+            )
             raise NetworkError("下载失败，未获取到内容或保存失败")
 
     except Exception as e:
