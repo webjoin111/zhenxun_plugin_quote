@@ -721,7 +721,7 @@ async def _handle_quote_generation(
                     final_variant = text_only_theme
 
             if not final_variant:
-                final_variant = Config.get_config("quote", "QUOTE_THEME", "qq-native")
+                final_variant = Config.get_config("quote", "THEME", "qq-native")
 
         if final_variant == "classic":
             is_pure_image = not any(

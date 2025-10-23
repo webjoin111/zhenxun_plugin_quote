@@ -1,6 +1,7 @@
 import os
 from typing import Optional, Literal, Union
 from nonebot.permission import SUPERUSER
+from nonebot.rule import Rule
 from arclet.alconna import Alconna, Args, Arparma, MultiVar, Option, Subcommand
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -69,10 +70,67 @@ async def _get_image_from_reply(event: Event, bot: Bot) -> Optional[Image]:
     return None
 
 
+def is_reply_to_bot(event: Event) -> bool:
+    """检查消息是否为对机器人自身消息的回复"""
+    if not isinstance(event, MessageEvent):
+        return False
+
+    reply = getattr(event, "reply", None)
+    sender = getattr(reply, "sender", None) if reply else None
+    sender_id = getattr(sender, "user_id", None) if sender else None
+
+    return sender_id is not None and str(sender_id) == str(
+        getattr(event, "self_id", "")
+    )
+
+
+delete_quote_cmd = on_alconna(
+    Alconna("删除"),
+    aliases={"del"},
+    priority=11,
+    block=True,
+    rule=Rule(is_reply_to_bot) & admin_check("quote", "DELETE_ADMIN_LEVEL"),
+)
+
+
+@delete_quote_cmd.handle()
+async def handle_delete_quote_standalone(
+    bot: Bot, event: MessageEvent, session: Uninfo
+):
+    """独立的删除语录处理函数"""
+    if not session.group:
+        logger.debug("删除命令在非群聊环境中使用，已忽略。", "群聊语录")
+        return
+
+    group_id = session.group.id
+    user_id = session.user.id
+
+    if not (image_seg := await _get_image_from_reply(event, bot)):
+        logger.debug("回复的消息中未找到图片，无法执行删除操作。", "群聊语录")
+        return
+
+    if not image_seg.id:
+        logger.warning("无法获取到回复图片的唯一标识，删除失败。", "群聊语录")
+        return
+
+    image_basename = os.path.basename(image_seg.id)
+
+    is_deleted = await QuoteService.delete_quote(group_id, image_basename)
+
+    if is_deleted:
+        await MessageUtils.build_message(
+            [At(target=user_id, flag="user"), "删除成功"]
+        ).send()
+    else:
+        logger.info(
+            f"尝试删除语录失败，图片 '{image_basename}' 不在群组 {group_id} 的语录库中。",
+            "群聊语录",
+        )
+
+
 quote_manage_cmd = on_alconna(
     Alconna(
         "quote",
-        Subcommand("del", alias={"删除"}),
         Subcommand(
             "manager",
             Subcommand(
@@ -98,6 +156,7 @@ quote_manage_cmd = on_alconna(
         ),
         Subcommand("theme", Args["theme_name?", str], alias={"主题"}),
     ),
+    permission=SUPERUSER,
     block=True,
     priority=10,
 )
@@ -105,42 +164,10 @@ quote_manage_cmd = on_alconna(
 
 @quote_manage_cmd.handle()
 async def _(bot: Bot, event: MessageEvent, arp: Arparma, session: Uninfo):
-    if arp.find("del"):
-        if not await admin_check("quote", "DELETE_ADMIN_LEVEL")(bot, event, session):
-            await quote_manage_cmd.finish("抱歉，你没有权限删除语录。")
-            return
-        await handle_delete_record(bot, event, session)
-    elif arp.find("manager"):
-        if not await SUPERUSER(bot, event):
-            await quote_manage_cmd.finish("抱歉，只有超级用户才能使用高级管理功能。")
-            return
+    if arp.find("manager"):
         await handle_adv_delete(bot, event, arp, session)
     elif arp.find("theme"):
         await handle_theme(bot, event, arp, session)
-
-
-async def handle_delete_record(bot: Bot, event: MessageEvent, session: Uninfo):
-    """删除语录处理函数"""
-    if not session.group:
-        return
-
-    user_id = session.user.id
-    group_id = session.group.id
-
-    if not (image_seg := await _get_image_from_reply(event, bot)):
-        await quote_manage_cmd.finish("请回复需要删除的语录图片。")
-        return
-
-    if not image_seg.id:
-        await quote_manage_cmd.finish("无法获取到回复图片的唯一标识，删除失败。")
-        return
-
-    image_basename = os.path.basename(image_seg.id)
-
-    is_deleted = await QuoteService.delete_quote(group_id, image_basename)
-    msg_text = "删除成功" if is_deleted else "该图不在语录库中"
-
-    await MessageUtils.build_message([At(target=user_id, flag="user"), msg_text]).send()
 
 
 def get_available_themes() -> list[str]:
@@ -163,9 +190,6 @@ def get_available_themes() -> list[str]:
 
 async def handle_theme(bot: Bot, event: MessageEvent, arp: Arparma, session: Uninfo):
     """处理 'quote theme' 命令"""
-    if not session.group:
-        return
-
     theme_name_or_index: str | None = arp.query("theme.theme_name")
 
     available_themes = get_available_themes()
@@ -186,12 +210,8 @@ async def handle_theme(bot: Bot, event: MessageEvent, arp: Arparma, session: Uni
         except (ValueError, IndexError):
             pass
 
-    if not await SUPERUSER(bot, event):
-        await quote_manage_cmd.finish("抱歉，只有超级用户才能切换语录主题。")
-        return
-
     if theme_name in available_themes:
-        Config.set_config("quote", "QUOTE_THEME", theme_name, auto_save=True)
+        Config.set_config("quote", "THEME", theme_name, auto_save=True)
         await quote_manage_cmd.finish(f"语录主题已切换为: {theme_name}")
     else:
         await quote_manage_cmd.finish(
@@ -205,10 +225,10 @@ async def handle_adv_delete(
     """高级删除命令处理函数"""
     current_user_id = str(event.get_user_id())
 
-    group_id = session.group.id
     if not session.group:
         await quote_manage_cmd.finish("高级管理命令必须在群聊中使用。")
         return
+    group_id = session.group.id
 
     target_for_reply = PlatformUtils.get_target(
         group_id=group_id, user_id=current_user_id
