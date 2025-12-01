@@ -2,6 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import ClassVar
 
+from cachetools import TTLCache
 from zhenxun.configs.config import Config
 from zhenxun.services.log import logger
 
@@ -19,7 +20,7 @@ class OCRService:
 
     _thread_executor = ThreadPoolExecutor(max_workers=2)
 
-    _cache: ClassVar[dict[str, str]] = {}
+    _cache: ClassVar[TTLCache] = TTLCache(maxsize=1000, ttl=3600)
 
     _initialized = False
 

@@ -1,7 +1,0 @@
-{% from 'partials/_component_macros.jinja' import wrapper %}
-{% call wrapper(data, 'quote-sequence-container') %}
-    {% for message_card in data.messages %}
-        {{ render(message_card) }}
-    {% endfor %}
-{% endcall %}
-

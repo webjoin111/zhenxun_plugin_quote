@@ -70,6 +70,29 @@ async def _get_image_from_reply(event: Event, bot: Bot) -> Optional[Image]:
     return None
 
 
+async def uploader_or_admin_check(
+    bot: Bot, event: MessageEvent, session: Uninfo
+) -> bool:
+    """
+    检查执行删除操作的用户是否为语录上传者，或者是满足配置权限的管理员。
+    """
+    if await admin_check("quote", "DELETE_ADMIN_LEVEL")(bot, event, session):
+        return True
+
+    if session.group:
+        group_id = session.group.id
+        user_id = session.user.id
+        if image_seg := await _get_image_from_reply(event, bot):
+            if image_seg.id:
+                image_basename = os.path.basename(image_seg.id)
+                quote = await QuoteService.find_quote_by_basename(
+                    group_id, image_basename
+                )
+                if quote and quote.uploader_user_id == user_id:
+                    return True
+    return False
+
+
 def is_reply_to_bot(event: Event) -> bool:
     """检查消息是否为对机器人自身消息的回复"""
     if not isinstance(event, MessageEvent):
@@ -89,7 +112,7 @@ delete_quote_cmd = on_alconna(
     aliases={"del"},
     priority=11,
     block=True,
-    rule=Rule(is_reply_to_bot) & admin_check("quote", "DELETE_ADMIN_LEVEL"),
+    rule=Rule(is_reply_to_bot, uploader_or_admin_check),
 )
 
 

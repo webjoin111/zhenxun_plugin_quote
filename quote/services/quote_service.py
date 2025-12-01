@@ -3,6 +3,7 @@ import random
 import base64
 from typing import Any, ClassVar
 
+from cachetools import TTLCache
 from nonebot.adapters.onebot.v11 import Bot
 from tortoise.expressions import Q
 from tortoise.functions import Count
@@ -10,7 +11,6 @@ from tortoise.functions import Count
 from zhenxun import ui
 from zhenxun.models.group_member_info import GroupInfoUser
 from zhenxun.services import avatar_service, logger
-from zhenxun.services.data_access import DataAccess
 from zhenxun.utils.echart_utils import ChartUtils
 from zhenxun.utils.echart_utils.models import Barh
 from zhenxun.utils.platform import PlatformUtils
@@ -35,14 +35,12 @@ except ImportError:
 
     seg = DummySeg()
 
-quote_dao = DataAccess(Quote)
-
 
 class QuoteService:
     """语录服务类"""
 
-    _recent_quotes: ClassVar[dict[str, list[int]]] = {}
-    _max_memory_size: ClassVar[int] = 10
+    _recent_quotes: ClassVar[TTLCache] = TTLCache(maxsize=1000, ttl=600)
+    _max_history_per_key: ClassVar[int] = 10
 
     @staticmethod
     async def add_quote(
@@ -85,7 +83,7 @@ class QuoteService:
                 relative_image_path = image_path
                 logger.warning(f"无法为 '{image_path}' 计算相对路径，将按原样存储。")
 
-            quote = await quote_dao.create(
+            quote = await Quote.create(
                 group_id=group_id,
                 image_path=relative_image_path,
                 image_hash=image_hash,
@@ -129,7 +127,7 @@ class QuoteService:
                 else:
                     logger.warning(f"图片文件不存在: {absolute_image_path}", "群聊语录")
 
-                await quote_dao.delete(id=quote.id)
+                await Quote.filter(id=quote.id).delete()
                 logger.info(
                     f"语录删除成功 - ID: {quote.id}, 群组: {group_id}", "群聊语录"
                 )
@@ -158,7 +156,7 @@ class QuoteService:
             if user_id_filter:
                 query_filters["quoted_user_id"] = user_id_filter
 
-            count = await quote_dao.count(**query_filters)
+            count = await Quote.filter(**query_filters).count()
             if count == 0:
                 logger.info(
                     f"群组 {group_id} 中 (用户: {user_id_filter or '任意'}) 没有语录",
@@ -168,13 +166,13 @@ class QuoteService:
 
             memory_key = f"{group_id}_{user_id_filter or 'all'}"
 
-            quotes = await quote_dao.filter(**query_filters)
+            quotes = await Quote.filter(**query_filters)
 
             if not quotes:
                 return None
 
-            recent_ids = cls._recent_quotes.get(memory_key, [])
-            if recent_ids and count > cls._max_memory_size:
+            recent_ids = cls._recent_quotes.get(memory_key) or []
+            if recent_ids and count > cls._max_history_per_key:
                 unseen_quotes = [q for q in quotes if q.id not in recent_ids]
                 if unseen_quotes:
                     quotes = unseen_quotes
@@ -226,7 +224,7 @@ class QuoteService:
         exact_match_query = Q(ocr_text__icontains=keyword) | Q(
             recorded_text__icontains=keyword
         )
-        exact_matches = await quote_dao.filter(exact_match_query, **base_filters)
+        exact_matches = await Quote.filter(exact_match_query, **base_filters)
 
         if exact_matches:
             logger.info(
@@ -251,7 +249,7 @@ class QuoteService:
 
             text_query_condition &= single_kw_text_condition
 
-        candidate_quotes = await quote_dao.filter(text_query_condition, **base_filters)
+        candidate_quotes = await Quote.filter(text_query_condition, **base_filters)
         logger.debug(
             f"数据库模糊搜索初步匹配到 {len(candidate_quotes)} 条语录", "群聊语录"
         )
@@ -346,7 +344,7 @@ class QuoteService:
                 "群聊语录",
             )
 
-            quotes = await quote_dao.filter(
+            quotes = await Quote.filter(
                 group_id=group_id, image_path__iendswith=image_basename
             )
             quote = quotes[0] if quotes else None
@@ -373,7 +371,7 @@ class QuoteService:
         """获取所有语录"""
         try:
             logger.info("开始获取所有语录", "群聊语录")
-            quotes = await quote_dao.all()
+            quotes = await Quote.all()
             logger.info(f"获取所有语录成功 - 总数: {len(quotes)}", "群聊语录")
             return quotes
         except Exception as e:
@@ -432,7 +430,7 @@ class QuoteService:
         if not quotes:
             raise ValueError("语录列表为空")
 
-        recent_ids = cls._recent_quotes.get(memory_key, [])
+        recent_ids = cls._recent_quotes.get(memory_key) or []
         unseen_quotes = [q for q in quotes if q.id not in recent_ids]
 
         if unseen_quotes:
@@ -445,7 +443,7 @@ class QuoteService:
 
         cls._recent_quotes[memory_key].append(selected_quote.id)
 
-        if len(cls._recent_quotes[memory_key]) > cls._max_memory_size:
+        if len(cls._recent_quotes[memory_key]) > cls._max_history_per_key:
             cls._recent_quotes[memory_key].pop(0)
 
         return selected_quote
@@ -475,7 +473,7 @@ class QuoteService:
                     if value is not None:
                         query &= Q(**{key: value})
 
-            final_matched_quotes = await quote_dao.filter(query)
+            final_matched_quotes = await Quote.filter(query)
 
             logger.info(
                 f"找到 {len(final_matched_quotes)} 条与条件匹配的语录",
@@ -577,7 +575,7 @@ class QuoteService:
     async def increment_view_count(quote_id: int) -> None:
         """增加语录的查看次数"""
         try:
-            quote = await quote_dao.get_or_none(id=quote_id)
+            quote = await Quote.get_or_none(id=quote_id)
             if quote:
                 quote.view_count += 1
                 await quote.save(update_fields=["view_count"])

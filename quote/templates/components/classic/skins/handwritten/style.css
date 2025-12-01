@@ -1,0 +1,16 @@
+@font-face {
+  font-family: 'TextFont';
+  src: url("{{ asset('@quote/assets/fonts/Muyao-Softbrush.ttf') }}");
+}
+
+:root {
+  --card-bg-color: #fdfbf7;
+  --text-color: #3a3a3a;
+  --author-color: #5c5c5c;
+  --gradient-start: rgba(253, 251, 247, 0);
+  --gradient-end: rgba(253, 251, 247, 1);
+  --main-font: 'TextFont', 'Noto Sans SC', sans-serif;
+  --author-font: 'TextFont', 'Noto Sans SC', sans-serif;
+}
+
+

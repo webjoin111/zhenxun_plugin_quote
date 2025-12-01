@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 from tortoise import fields
 from pydantic import BaseModel, Field
@@ -6,7 +7,25 @@ from zhenxun.services.db_context import Model
 from zhenxun.ui.models import RenderableComponent
 from zhenxun.ui.models.core.base import ContainerComponent
 
-QUOTE_CACHE_TYPE = "QUOTE_CACHE"
+QUOTE_ASSETS_PATH = Path(__file__).parent / "templates"
+
+_base_theme_cache: dict[str, str] = {}
+
+
+def _find_base_theme_for_variant(variant_name: str) -> str:
+    if not _base_theme_cache:
+        components_root = QUOTE_ASSETS_PATH / "components"
+        if components_root.exists() and components_root.is_dir():
+            for component_dir in components_root.iterdir():
+                if component_dir.is_dir():
+                    base_theme_name = component_dir.name
+                    _base_theme_cache[base_theme_name] = base_theme_name
+                    skins_dir = component_dir / "skins"
+                    if skins_dir.exists() and skins_dir.is_dir():
+                        for skin_dir in skins_dir.iterdir():
+                            if skin_dir.is_dir():
+                                _base_theme_cache[skin_dir.name] = base_theme_name
+    return _base_theme_cache.get(variant_name, "qq-native")
 
 
 class Quote(Model):
@@ -45,11 +64,6 @@ class Quote(Model):
     view_count = fields.IntField(default=0)
     """查看次数"""
 
-    cache_type = QUOTE_CACHE_TYPE
-    """缓存类型"""
-    cache_key_field = "id"
-    """缓存键字段 (使用语录的ID作为缓存的唯一键)"""
-
     class Meta:
         table = "quote"
         table_description = "语录表"
@@ -84,10 +98,8 @@ class QuoteCardData(RenderableComponent):
 
     @property
     def template_name(self) -> str:
-        # 根据 variant 动态选择模板路径
-        if self.variant and self.variant.startswith("classic"):
-            return "@quote/components/classic"
-        return "@quote/components/qq-native"
+        base_theme = _find_base_theme_for_variant(self.variant) if self.variant else "qq-native"
+        return f"@quote/components/{base_theme}"
 
     variant: str | None = Field(default=None, description="要使用的皮肤/主题名称")
 

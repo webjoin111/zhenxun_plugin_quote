@@ -8,6 +8,7 @@ from typing import cast
 
 import aiofiles
 from arclet.alconna import Alconna, Args, Arparma, Option
+from nonebot.permission import SUPERUSER
 import httpx
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
 from nonebot.typing import T_State
@@ -34,7 +35,7 @@ from ..model import Quote, QuoteCardData, QuoteSequenceData, QuotedReplyData
 from ..services.ocr_service import OCRService
 from ..services.quote_service import QuoteService
 from ..utils.exceptions import ImageProcessError, NetworkError
-from ..utils.image_utils import get_img_hash, get_img_hash_from_bytes
+from ..utils.image_utils import get_img_hash
 
 from zhenxun.services import avatar_service
 
@@ -104,6 +105,7 @@ async def _process_nested_reply(
                     continue
 
                 grandparent_msg_info = await bot.get_msg(message_id=grandparent_id)
+                gp_group_id = grandparent_msg_info.get("group_id")
 
                 gp_sender = grandparent_msg_info["sender"]
                 gp_user_id = str(gp_sender["user_id"])
@@ -117,11 +119,40 @@ async def _process_nested_reply(
                 )
                 gp_uni_msg = await UniMessage.generate(message=gp_message_obj, bot=bot)
 
-                gp_content_list = []
+                gp_content_list: list[dict] = []
+                current_text_parts: list[str] = []
+
+                async def flush_text_gp() -> None:
+                    nonlocal current_text_parts
+                    if current_text_parts:
+                        gp_content_list.append(
+                            {"type": "text", "value": "".join(current_text_parts)}
+                        )
+                        current_text_parts = []
+
                 for seg in gp_uni_msg:
-                    if isinstance(seg, Text) and seg.text.strip():
-                        gp_content_list.append({"type": "text", "value": seg.text})
+                    if isinstance(seg, Text) and seg.text:
+                        current_text_parts.append(html.escape(seg.text))
+                    elif isinstance(seg, At):
+                        at_qq = seg.target
+                        at_name = seg.display or at_qq
+                        if gp_group_id:
+                            try:
+                                member_info_at = await bot.get_group_member_info(
+                                    group_id=int(gp_group_id), user_id=int(at_qq)
+                                )
+                                at_name = (
+                                    member_info_at.get("card")
+                                    or member_info_at.get("nickname")
+                                    or at_name
+                                )
+                            except Exception:
+                                pass
+                        current_text_parts.append(
+                            f'<span class="message-at">@{html.escape(at_name)}</span>'
+                        )
                     elif isinstance(seg, UniImage):
+                        await flush_text_gp()
                         try:
                             if seg.path:
                                 async with aiofiles.open(seg.path, "rb") as img_f:
@@ -145,6 +176,7 @@ async def _process_nested_reply(
                             logger.warning(
                                 f"处理嵌套引用内图片失败: {e}", "群聊语录", e=e
                             )
+                await flush_text_gp()
 
                 gp_avatar_path = await avatar_service.get_avatar_path(
                     platform="qq", identifier=gp_user_id
@@ -462,6 +494,7 @@ make_record_alc = Alconna(
     Args(),
     Option("-s|--style", Args["style_name", str], help_text="指定主题样式"),
     Option("-n|--num", Args["count", int, 1], help_text="记录连续消息的数量"),
+    Option("-o|--only|--仅作者", help_text="仅记录/生成被回复用户的连续消息"),
 )
 make_record_cmd = on_alconna(make_record_alc, block=True)
 
@@ -470,6 +503,7 @@ generate_quote_alc = Alconna(
     Args(),
     Option("-s|--style", Args["style_name", str], help_text="指定主题样式"),
     Option("-n|--num", Args["count", int, 1], help_text="生成连续消息的数量"),
+    Option("-o|--only|--仅作者", help_text="仅生成被回复用户的连续消息"),
 )
 generate_quote_cmd = on_alconna(generate_quote_alc, block=True)
 
@@ -589,11 +623,32 @@ async def save_img_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_
         await save_img_cmd.finish("未能成功获取图片数据.")
         return
 
-    image_hash = await get_img_hash(temp_image_path)
-    ocr_content = await OCRService.recognize_text(str(temp_image_path))
-
     if "group" in session_id:
         group_id = session_id.split("_")[1]
+        image_hash = await get_img_hash(temp_image_path)
+
+        if (
+            image_hash
+            and await Quote.filter(group_id=group_id, image_hash=image_hash).exists()
+        ):
+            if temp_image_path.name.startswith("temp_") and temp_image_path.exists():
+                try:
+                    os.remove(temp_image_path)
+                    logger.info(
+                        f"删除临时文件 (发现重复): {temp_image_path}", "群聊语录"
+                    )
+                except Exception as e:
+                    logger.error(f"删除临时文件失败: {e}", "群聊语录", e=e)
+            await bot.call_api(
+                "send_group_msg",
+                **{
+                    "group_id": int(group_id),
+                    "message": MessageSegment.reply(message_id) + "不要重复记录",
+                },
+            )
+            return
+
+        ocr_content = await OCRService.recognize_text(str(temp_image_path))
 
         image_name = hashlib.md5(img_data).hexdigest() + ".png"
         quote_path = ensure_quote_path()
@@ -669,6 +724,7 @@ async def _handle_quote_generation(
     """
     user_variant: str | None = arp.query("style.style_name")
     count: int = arp.query("num.count", 1) if not user_variant == "classic" else 1
+    is_only_author = arp.find("only")
 
     if count > MAX_RECORD_COUNT:
         return None, None, None, f"一次最多只能处理 {MAX_RECORD_COUNT} 条消息哦。"
@@ -681,9 +737,19 @@ async def _handle_quote_generation(
         assert info is not None
         uni_message, card, qqid = info
 
+        allow_bot_record = Config.get_config("quote", "QUOTE_ALLOW_BOT_RECORD", False)
+        if not allow_bot_record and str(qqid) == str(event.self_id):
+            return None, None, None, "不允许记录Bot的消息。"
+
+        is_superuser = await SUPERUSER(bot, event)
         allow_self_record = Config.get_config("quote", "QUOTE_ALLOW_SELF_RECORD", False)
-        if issuer_user_id and not allow_self_record and str(qqid) == issuer_user_id:
-            return None, None, None, "不允许记录自己的消息，如需开启请联系管理员。"
+        if (
+            not is_superuser
+            and issuer_user_id
+            and not allow_self_record
+            and str(qqid) == issuer_user_id
+        ):
+            return None, None, None, "不允许记录自己的消息。"
 
         replied_msg_id = cast(int, event.reply.message_id)
         full_replied_msg_info = await bot.get_msg(message_id=replied_msg_id)
@@ -769,6 +835,7 @@ async def _handle_quote_generation(
 
         group_id = session.group.id
         start_msg_id = int(reply.id)
+        target_author_id = None
         message_history = []
         try:
             replied_msg_info = await bot.get_msg(message_id=start_msg_id)
@@ -776,24 +843,40 @@ async def _handle_quote_generation(
             if not anchor_seq:
                 return None, None, None, "获取被回复消息的序列号失败，无法处理。"
 
+            fetch_count = count
+            if is_only_author:
+                target_author_id = str(replied_msg_info["sender"]["user_id"])
+                fetch_count = min(max(count * 8, 20), 100)
+
             history_result = await bot.call_api(
                 "get_group_msg_history",
                 **{
                     "group_id": int(group_id),
                     "message_seq": anchor_seq,
-                    "count": count,
+                    "count": fetch_count,
                     "reverseOrder": True,
                 },
             )
             raw_messages = history_result.get("messages", [])
             logger.debug(f"raw_messages: {raw_messages}")
 
+            allow_bot_record = Config.get_config("quote", "QUOTE_ALLOW_BOT_RECORD", False)
             valid_messages = [
                 msg
                 for msg in raw_messages
-                if msg["sender"]["user_id"] != event.self_id
+                if (
+                    allow_bot_record
+                    or str(msg["sender"]["user_id"]) != str(event.self_id)
+                )
                 and _is_message_renderable(msg)
             ]
+
+            if is_only_author and target_author_id:
+                valid_messages = [
+                    msg
+                    for msg in valid_messages
+                    if str(msg["sender"]["user_id"]) == target_author_id
+                ][-count:]
 
             valid_messages.sort(key=lambda m: m.get("time", 0))
             message_history = valid_messages
@@ -804,13 +887,15 @@ async def _handle_quote_generation(
             return None, None, None, "未能获取到任何有效的历史消息。"
 
         last_message_user_id = str(message_history[-1]["sender"]["user_id"])
+        is_superuser = await SUPERUSER(bot, event)
         allow_self_record = Config.get_config("quote", "QUOTE_ALLOW_SELF_RECORD", False)
         if (
-            issuer_user_id
+            not is_superuser
+            and issuer_user_id
             and not allow_self_record
             and last_message_user_id == issuer_user_id
         ):
-            return None, None, None, "不允许记录自己的消息，如需开启请联系管理员。"
+            return None, None, None, "不允许记录自己的消息。"
 
         try:
             (
@@ -859,14 +944,14 @@ async def make_record_handle(
     assert img_data is not None
     assert recorded_text is not None
 
-    image_hash = await get_img_hash_from_bytes(img_data)
+    image_hash = hashlib.md5(img_data).hexdigest()
     group_id = session.group.id if session.group else ""
 
     if await Quote.filter(group_id=group_id, image_hash=image_hash).exists():
         await MessageUtils.build_message("不要重复记录").send(target=event, bot=bot)
         return
 
-    image_name = hashlib.md5(img_data).hexdigest() + ".png"
+    image_name = image_hash + ".png"
     image_path = ensure_quote_path() / image_name
 
     try:

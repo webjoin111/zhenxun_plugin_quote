@@ -1,7 +1,0 @@
-{
-  "name": "语录卡片",
-  "entrypoint": "main.html",
-  "render_options": {
-    "viewport": { "width": 1, "height": 1 }
-  }
-}

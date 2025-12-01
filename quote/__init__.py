@@ -1,12 +1,10 @@
 from nonebot import get_driver
 from nonebot.plugin import PluginMetadata
 
-from zhenxun.services.cache import CacheRegistry
 from zhenxun.utils.manager.priority_manager import PriorityLifecycle
 from pathlib import Path
 from zhenxun.configs.utils import PluginExtraData, RegisterConfig
 from zhenxun.services.log import logger
-from .model import Quote, QUOTE_CACHE_TYPE
 from .command.manage_commands import quote_manage_cmd  # noqa: F401
 from .command.query_commands import (  # noqa: F401
     quote_stats_cmd,
@@ -23,7 +21,7 @@ from zhenxun.services import renderer_service
 ensure_quote_path()
 driver = get_driver()
 
-QUOTE_ASSETS_PATH = Path(__file__).parent / "assets"
+QUOTE_ASSETS_PATH = Path(__file__).parent / "templates"
 
 
 @PriorityLifecycle.on_startup(priority=9)
@@ -74,8 +72,9 @@ __plugin_meta__ = PluginMetadata(
 > 将回复的文本内容生成一张语录图片并保存。
 
 ### 🎨 主题与预览
-`生成` / `记录` `-s` *`主题ID`*
+`生成` / `记录` `[-s 主题ID]` `[-n 数量]` `[-o|--only]`
 > 在生成或记录语录时，使用指定的主题样式。`生成` 命令仅预览图片而不保存。
+> **-o, --only**: 当与 `-n` 连用时，将只查找并记录被回复用户的消息，忽略其他人的发言。
 
 `quote theme` (或 `语录 主题`)
 > 超级用户查看所有可用的语录卡片主题，可在群聊或私聊中使用。
@@ -111,7 +110,7 @@ __plugin_meta__ = PluginMetadata(
     supported_adapters={"~onebot.v11"},
     extra=PluginExtraData(
         author="webjoin111",
-        version="v1.1.1",
+        version="v1.1.3",
         admin_level=0,
         configs=[
             RegisterConfig(
@@ -172,6 +171,13 @@ __plugin_meta__ = PluginMetadata(
             ),
             RegisterConfig(
                 module="quote",
+                key="QUOTE_ALLOW_BOT_RECORD",
+                value=False,
+                help="是否允许记录Bot本身发送的消息。",
+                default_value=False,
+            ),
+            RegisterConfig(
+                module="quote",
                 key="DELETE_ADMIN_LEVEL",
                 value=5,
                 help="设置使用「删除」命令所需的权限等级。默认值为5，允许群管理员使用。",
@@ -180,6 +186,3 @@ __plugin_meta__ = PluginMetadata(
         ],
     ).dict(),
 )
-
-CacheRegistry.register(QUOTE_CACHE_TYPE, Quote)
-logger.info(f"Quote 插件缓存类型 ({QUOTE_CACHE_TYPE}) 注册成功", "群聊语录")

@@ -1,0 +1,157 @@
+body {
+  margin: 0;
+  display: inline-block;
+  padding: 15px 50px 15px 15px;
+  background-color: #f0f2f5;
+}
+
+.quote-card-qq-native {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-family: "Noto Sans SC", sans-serif;
+}
+
+.avatar-container .avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.content-wrapper {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: flex-start;
+  
+}
+.author-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding-right: 10px;
+  box-sizing: border-box;
+}
+
+.author-name {
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+}
+
+.author-title {
+  font-size: 9px;
+  color: #fff;
+  padding: 0;
+  border: none;
+  font-weight: normal;
+}
+
+.author-level {
+  font-size: 9px;
+  color: #fff;
+  font-weight: bold;
+  opacity: 0.9;
+}
+
+.title-level-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: rgba(176, 190, 197, 0.55);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #fff;
+}
+
+.title-level-badge.has-custom-title {
+  background-color: rgba(156, 39, 176, 0.5);
+}
+
+.title-level-badge.role-admin {
+  background-color: rgba(0, 123, 255, 0.5);
+}
+
+.title-level-badge.role-owner {
+  background-color: rgba(255, 152, 0, 0.5);
+}
+
+.message-bubble {
+  background-color: #fff;
+  border-radius: 10px;
+  padding: 4px 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  word-wrap: break-word;
+  box-sizing: border-box;
+}
+
+.message-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
+  white-space: pre-wrap;
+  max-width: 760px;
+}
+
+.message-at {
+  color: #007bff;
+  font-weight: 500;
+}
+
+.message-image {
+  max-width: 250px;
+  max-height: 250px;
+  border-radius: 6px;
+  margin-top: 5px;
+  display: block;
+}
+
+.quoted-reply-container {
+  background-color: rgba(0, 0, 0, 0.05);
+  padding: 8px 10px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  border-left: 3px solid rgba(0, 0, 0, 0.2);
+}
+
+.quoted-reply-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.quoted-reply-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+
+.quoted-reply-author {
+  font-size: 10px;
+  color: #666;
+  font-weight: 500;
+}
+
+.quoted-reply-content {
+  display: inline-block;
+}
+
+.quoted-reply-text {
+  font-size: 12px;
+  color: #555;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.quoted-reply-image {
+  max-width: 100%;
+  max-height: 150px;
+  border-radius: 4px;
+  margin-top: 4px;
+  display: block;
+}

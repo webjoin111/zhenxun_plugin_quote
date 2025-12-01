@@ -1,9 +1,0 @@
-{
-  "name": "语录序列",
-  "entrypoint": "main.html",
-  "styles": "style.css",
-  "render_options": {
-    "viewport": { "width": 10, "height": 10 }
-  }
-}
-

@@ -1,7 +1,7 @@
 # 🤖 群聊语录 (Quote)
 
 <p align="center">
-  <a href="https://github.com/webjoin111/zhenxun_plugin_quote"><img src="https://img.shields.io/badge/Version-v0.4.5-blue.svg" alt="Version"></a>
+  <a href="https://github.com/webjoin111/zhenxun_plugin_quote"><img src="https://img.shields.io/badge/Version-v1.1.2-blue.svg" alt="Version"></a>
   <a href="https://github.com/webjoin111/zhenxun_plugin_quote/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License"></a>
   <a href="https://github.com/zhenxun-org/zhenxun_bot"><img src="https://img.shields.io/badge/Framework-ZhenxunBot-ff69b4.svg" alt="Framework"></a>
 </p>
@@ -49,42 +49,48 @@
 
 ## ⚙️ 依赖
 
-插件会自动处理大部分依赖。您可能需要根据需求手动安装以下可选依赖：
+本插件的核心功能（AI识别）**无需额外安装依赖**。以下依赖项均为**可选**，用于提供备用功能或性能优化：
 
-- **基础 OCR (默认)**:
-    ```bash
-    pip install easyocr
-    ```
+#### **本地OCR引擎 (可选，作为AI的备用方案)**
 
-- **可选的高性能 OCR**: (推荐，但安装可能较复杂)
-    ```bash
-    # 安装 PaddlePaddle 核心库（请根据您的环境选择合适的版本，CPU/GPU）
-    pip install paddlepaddle
-    # 安装 PaddleOCR
-    pip install paddleocr
-    ```
+仅在您无法使用或不想使用AI识别功能时，才需要安装以下至少一个库。
 
-- **分词优化**: (用于更精准的中文标签和搜索)
-    ```bash
-    pip install spacy_pkuseg
-    ```
+- **EasyOCR**: 兼容性好，安装简单。
+  ```bash
+  pip install easyocr
+  ```
+- **PaddleOCR**: 性能和准确率通常优于EasyOCR，但安装可能更复杂。
+  ```bash
+  # 1. 安装PaddlePaddle核心库（请根据您的环境选择CPU/GPU版本）
+  pip install paddlepaddle
+  # 2. 安装PaddleOCR
+  pip install paddleocr
+  ```
+
+#### **中文分词优化 (可选)**
+
+为了获得更精准的中文关键词搜索和标签生成效果，强烈建议安装此依赖。
+
+```bash
+pip install spacy_pkuseg
+```
 
 ## 🛠️ 配置项
 所有配置均可在真寻机器人 WebUI -> `配置中心` -> `quote` 模块下进行修改。
 
 | 配置项               | 说明                                                                                                         | 默认值                                       |
 | :------------------- | :----------------------------------------------------------------------------------------------------------- | :------------------------------------------- |
-| `OCR_ENGINE`         | 本地 OCR 引擎选择。可选值：`easyocr`, `paddleocr`。                                                          | `easyocr`                                    |
-| `OCR_USE_GPU`        | 是否为本地 OCR 引擎启用 GPU 加速。                                                                           | `False`                                      |
-| `AI_ENABLED`         | **[推荐]** 是否启用 AI 识别。启用后将优先使用真寻的 LLM 服务，失败后降级到本地 OCR。                         | `False`                                      |
+| `AI_ENABLED`         | **[强烈推荐]** 是否启用 AI 识别。启用后将优先使用真寻的 LLM 服务，失败后降级到本地 OCR。                   | `True`                                       |
 | `OCR_AI_MODEL`       | 用于图片识别的多模态大模型。格式为 `ProviderName/ModelName`。需在真寻的 `AI` 配置组中配置好对应的 Provider。 | `Gemini/gemini-2.5-flash-lite-preview-06-17` |
+| `OCR_ENGINE`         | **[备用]** 本地 OCR 引擎选择。可选值：`easyocr`, `paddleocr`。                                                | `easyocr`                                    |
+| `OCR_USE_GPU`        | **[备用]** 是否为本地 OCR 引擎启用 GPU 加速。                                                                | `True`                                       |
 | `QUOTE_PATH`              | 语录图片保存路径。留空则使用默认路径 `data/quote/images`。                                                   | `""`                                         |
 | `THEME`             | 生成语录卡片时默认使用的主题/皮肤名称。                                                                      | `qq-native`                                  |
 | `QUOTE_TEXT_ONLY_THEME`   | 仅用于纯文本（可包含@）的单条语录的主题。留空则默认使用 `THEME`。                                      | `""`                                         |
-| `QUOTE_ALLOW_SELF_RECORD` | 是否允许用户使用「记录」命令记录自己的消息。                                                                  | `False`                                      |
-| `DELETE_ADMIN_LEVEL`      | 使用 `删除` 命令所需的权限等级（0:群员, 1:管理员, 2:群主, 5:群管及以上）。                                   | `5`                                          |
+| `QUOTE_ALLOW_SELF_RECORD` | 是否允许用户使用「记录」命令记录自己的消息。（超级用户无视此限制）                                           | `False`                                      |
+| `DELETE_ADMIN_LEVEL`      | 使用 `删除` 命令所需的权限等级（0:群员, 5:群管及以上）。（语录上传者本人无视此限制）                       | `5`                                          |
 
-> **注意**: AI 识别功能依赖于真寻框架的 `llm` 服务。请确保您已在 WebUI -> `配置中心` -> `AI` 模块下正确配置了至少一个支持视觉功能的大模型提供商（如 Gemini, GLM-4V 等）。
+> **强烈推荐**: 保持 `AI_ENABLED` 为 `True` 并配置好真寻的 `AI` 服务。这是最简单、最高效、最准确的识别方案。仅在无法使用 AI 服务时，再考虑安装本地 OCR 引擎作为备用。
 
 ## 📖 使用说明
 
@@ -120,6 +126,7 @@
 
 #### 删除命令（按配置权限）
 -   `删除` / `del` (回复由机器人发送的语录图片)：删除被回复的语录及其图片文件，仅在满足 `DELETE_ADMIN_LEVEL` 权限要求时生效；权限不足时将静默忽略。
+    > **注**: 语录的上传者本人可以无视权限等级，直接删除自己上传的语录。
 
 #### 高级管理 (超级用户权限)
 -   `quote manager keyword [词1] [词2]...` / `语录管理 删除关键词 [词1] [词2]...`
@@ -147,9 +154,9 @@
 | **安装难度**   | **无需额外安装**       | 复杂                 | 简单                 |
 | **资源占用**   | **极低 (云端处理)**    | 较高                 | 中等                 |
 | **上下文理解** | **是**                 | 否                   | 否                   |
-| **适用场景**   | 复杂截图、手写、艺术字 | 快速本地识别、无网络 | 基础识别、低配置环境 |
+| **适用场景**   | **所有场景 (首选)**    | 快速本地识别、无网络 | 基础识别、低配置环境 |
 
-**最佳实践**: 启用 `AI_ENABLED`，并将 `OCR_ENGINE` 设置为 `paddleocr`。这样可以享受 AI 带来的高准确率，同时在 AI 服务不可用时，拥有一个强大的本地备用方案。
+**最佳实践**: **启用 `AI_ENABLED` 并配置好真寻的 `AI` 服务**。这是最简单、最高效、最准确的方案。仅在无法使用 AI 服务时，再考虑安装本地 OCR 引擎作为备用。
 
 
 
@@ -227,100 +234,7 @@
 
 ## 📝 更新日志
 
-### 🎉 v1.1.0 - UI系统重构与命令增强
-
-#### 🎨 UI渲染系统重构
-- 🏗️ **模块化UI系统**：引入全新的组件化UI渲染架构，替换旧版主题机制
-  - 新增 `components` 目录存放语录卡片组件（`classic`, `qq-native`）
-  - 新增 `pages` 目录存放统计页面组件（`hot_quotes`, `quote-sequence-page`）
-  - 注册 `@quote` 模板命名空间至渲染服务，实现动态UI渲染
-- 📋 **数据模型规范**：新增 `QuoteCardData`, `QuoteSequenceData`, `HotQuotesPageData` 等 Pydantic 模型
-- 🗑️ **移除旧版资源**：废弃 `templates` 和 `themes` 目录下的旧版HTML/CSS模板
-
-#### ⚡ 命令系统增强
-- 🔄 **命令结构优化**：
-  - 合并 `删除`, `addtag`, `deltag` 命令至统一的 `quote manage` 命令组
-  - `语录统计` 更新为子命令结构（`quote stats hot/top-uploaders/top-quoted`）
-- 📝 **连续消息记录**：`记录` 和 `生成` 命令新增 `-n|--num` 选项，支持连续多条消息语录生成
-- 🎯 **主题选择增强**：
-  - 支持通过 `-s [主题序号]` 使用数字快速选择主题
-  - 新增纯文本消息专属主题配置（`QUOTE_TEXT_ONLY_THEME`）
-  - `quote theme` 命令支持使用序号或名称切换主题
-- 🎨 **渲染能力提升**：优化消息内容解析，支持 `@` 提及、内联图片和嵌套引用消息渲染
-
-#### ⚙️ 配置与优化
-- 🆕 **新增配置项**：
-  - `QUOTE_TEXT_ONLY_THEME`：为纯文本（含@）单条语录指定专属主题
-  - `QUOTE_ALLOW_SELF_RECORD`：控制是否允许用户记录自己的消息
-- 🔧 **配置调整**：
-  - `THEME` 默认值更改为 `qq-native`
-  - `DELETE_ADMIN_LEVEL` 默认值调整为 `5`
-- 🔍 **内部优化**：
-  - 语录重复检查改为主要基于图片哈希值
-  - 头像获取统一使用 `avatar_service`
-  - OCR 服务增加引擎实例空值检查，提高稳定性
-  - 移除 `ThemeService`，主题选择逻辑集成至新渲染流程
-
----
-
-### 🔄 历史版本
-
-### 🎉 v1.0.0 - 重大版本更新
-
-#### 🔧 核心功能重构
-- 🎨 **主题系统**：引入语录主题系统，支持HTML/CSS/JS自定义渲染
-- 🔧 **查询优化**：重构语录查询逻辑，消除重复代码并提升性能
-- 🤖 **AI升级**：升级AI-OCR功能，优先使用LLM服务并保留本地降级方案
-
-#### ✨ 新增功能
-- 📋 新增 `语录主题` 命令查看可用主题
-- 🛠️ 新增 `语录管理` 主命令，支持批量删除和清理操作
-- 🎯 支持通过 `-s [主题ID]` 参数指定语录生成主题
-- 🎨 内置三种精美主题：**经典黑**、**深空蓝**、**手写回忆**
-- 🔧 新增高级管理命令，支持按用户、关键词批量管理语录
-
-#### 🚀 优化改进
-- 🗂️ **路径优化**：支持相对路径存储，提升数据可移植性
-- 🚀 **消息处理**：统一消息处理方式，简化回复和消息解析
-- 🧹 **渲染升级**：移除旧版Pilmoji库，采用现代HTML渲染方案
-- ⚡ **防重复**：避免短期内重复发送相同语录
-- 📊 **统计增强**：支持跨群组查询和更详细的数据分析
-- 🎛️ **配置完善**：新增主题和权限配置选项
-
----
-
-#### v0.4.5
-- ✅ 支持多关键词AND模式搜索
-- ✅ 支持自定义语录图片保存路径
-- ✅ 统一图片格式为PNG并添加转换功能
-- ✅ 优化图片文本字体自适应调整
-- 🐛 修复删除语录时图片文件同步删除
-- 🔧 重构文件路径操作使用pathlib
-- 🔧 增强表情符号加载和文件处理健壮性
-
-#### v0.4.4
-- ✨ 添加 Gemini AI 识别功能
-- 🎨 优化语录显示效果
-- 🐛 修复用户名显示问题
-- 📊 添加语录统计功能
-
-#### v0.4.3
-- ⚙️ 添加字体配置选项
-- 🎨 优化语录生成效果
-- 🐛 修复多处 Bug
-
-#### v0.4.2
-- 📦 添加批量上传和备份功能
-- 🔍 优化 OCR 识别效果
-- 🐛 修复标签管理问题
-
-#### v0.4.1
-- 🔍 添加多种 OCR 引擎支持
-- 🔍 优化语录搜索功能
-- 🐛 修复图片处理问题
-
-#### v0.4.0
-- 🎉 初始版本发布
+详细的更新历史请参见 [CHANGELOG.md](./CHANGELOG.md)。
 ## 🙏 致谢
 
 -   **RongRongJi**: 本项目基于其开发的 [nonebot_plugin_quote](https://github.com/RongRongJi/nonebot_plugin_quote) 进行了大量重构和功能扩展，感谢原作者的杰出工作。

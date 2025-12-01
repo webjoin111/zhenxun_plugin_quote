@@ -1,9 +1,0 @@
-{
-  "name": "热门语录排行榜",
-  "entrypoint": "main.html",
-  "styles": "style.css",
-  "render_options": {
-    "viewport": { "width": 800, "height": 10 }
-  }
-}
-
