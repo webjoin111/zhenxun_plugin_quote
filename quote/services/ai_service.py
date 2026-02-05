@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 from zhenxun.configs.config import Config
 from zhenxun.services.log import logger
-from zhenxun.services.llm import LLMException, get_model_instance, generate_structured
+from zhenxun.services.llm import LLMException, generate_structured
 from nonebot_plugin_alconna.uniseg import UniMessage, Text, Image
 
 
@@ -44,7 +44,6 @@ class AIService:
         if not cls._enabled:
             logger.debug("AI 功能未启用，跳过 AI 识别", "群聊语录-AI")
             return None
-
 
         prompt = (
             "你是一个顶级的图像文字识别（OCR）引擎。"

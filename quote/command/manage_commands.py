@@ -93,7 +93,7 @@ async def uploader_or_admin_check(
     return False
 
 
-def is_reply_to_bot(event: Event) -> bool:
+async def is_reply_to_bot(event: Event) -> bool:
     """检查消息是否为对机器人自身消息的回复"""
     if not isinstance(event, MessageEvent):
         return False
@@ -112,7 +112,7 @@ delete_quote_cmd = on_alconna(
     aliases={"del"},
     priority=11,
     block=True,
-    rule=Rule(is_reply_to_bot, uploader_or_admin_check),
+    rule=Rule(is_reply_to_bot),
 )
 
 
@@ -121,6 +121,9 @@ async def handle_delete_quote_standalone(
     bot: Bot, event: MessageEvent, session: Uninfo
 ):
     """独立的删除语录处理函数"""
+    if not await uploader_or_admin_check(bot, event, session):
+        await delete_quote_cmd.finish()
+
     if not session.group:
         logger.debug("删除命令在非群聊环境中使用，已忽略。", "群聊语录")
         return
@@ -175,14 +178,16 @@ quote_manage_cmd = on_alconna(
                 Args["target?", Literal["退群用户"], "退群用户"],
                 alias={"清理"},
             ),
-            alias={"语录管理"},
         ),
-        Subcommand("theme", Args["theme_name?", str], alias={"主题"}),
+        Subcommand("theme", Args["theme_name?", str]),
     ),
     permission=SUPERUSER,
     block=True,
     priority=10,
 )
+
+quote_manage_cmd.shortcut("语录管理", {"args": ["manager"]})
+quote_manage_cmd.shortcut("语录主题", {"args": ["theme"]})
 
 
 @quote_manage_cmd.handle()

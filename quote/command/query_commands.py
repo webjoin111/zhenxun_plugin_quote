@@ -28,10 +28,10 @@ stats_alc = Alconna(
         Subcommand("hot", Args["limit?", int, 10], alias={"热门"}),
         Subcommand("top-uploaders", Args["limit?", int, 10], alias={"高产上传"}),
         Subcommand("top-quoted", Args["limit?", int, 10], alias={"高产被录"}),
-        alias={"统计"},
     ),
 )
 quote_stats_cmd = on_alconna(stats_alc, priority=5, block=True)
+quote_stats_cmd.shortcut("语录统计", {"args": ["stats"]})
 
 
 async def _get_valid_quote(
