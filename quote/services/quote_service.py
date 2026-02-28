@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import random
 import base64
 from typing import Any, ClassVar
@@ -76,6 +77,7 @@ class QuoteService:
 
             try:
                 relative_image_path = os.path.relpath(image_path, DATA_PATH)
+                relative_image_path = Path(relative_image_path).as_posix()
                 logger.debug(
                     f"将绝对路径 '{image_path}' 转换为相对路径 '{relative_image_path}' 进行存储。"
                 )

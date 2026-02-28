@@ -46,7 +46,7 @@ def resolve_quote_image_path(path_str: str | Path) -> Path:
     解析语录图片路径，无论是相对还是绝对，都返回一个可用的绝对路径。
     这是处理新旧两种路径格式的核心。
     """
-    path = Path(path_str)
+    path = Path(str(path_str).replace("\\", "/"))
     if path.is_absolute():
         return path
     return DATA_PATH / path

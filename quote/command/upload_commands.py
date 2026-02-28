@@ -568,6 +568,17 @@ async def save_img_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_
         try:
             resp_image_info = await bot.call_api("get_image", **{"file": file_name})
             image_local_path_gocq = resp_image_info["file"]
+            if not os.path.exists(image_local_path_gocq):
+                logger.warning(
+                    f"实现端返回的路径不可达: {image_local_path_gocq}, 尝试 URL 下载",
+                    "群聊语录",
+                )
+                if image_url_for_httpx:
+                    file_name = ""
+                    raise FileNotFoundError("实现端路径在当前系统不存在")
+                else:
+                    await save_img_cmd.finish("图片路径不可达且无下载URL，上传失败")
+                    return
             base_img_name = os.path.basename(image_local_path_gocq)
             quote_path = ensure_quote_path()
             image_path = quote_path / base_img_name
@@ -860,7 +871,9 @@ async def _handle_quote_generation(
             raw_messages = history_result.get("messages", [])
             logger.debug(f"raw_messages: {raw_messages}")
 
-            allow_bot_record = Config.get_config("quote", "QUOTE_ALLOW_BOT_RECORD", False)
+            allow_bot_record = Config.get_config(
+                "quote", "QUOTE_ALLOW_BOT_RECORD", False
+            )
             valid_messages = [
                 msg
                 for msg in raw_messages

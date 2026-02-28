@@ -1,5 +1,7 @@
 import os
+from pathlib import Path
 
+import aiofiles
 from arclet.alconna import Alconna, Args, Arparma, Subcommand, MultiVar
 from nonebot.adapters.onebot.v11 import Bot, Event
 from nonebot.typing import T_State
@@ -129,7 +131,10 @@ async def record_pool_handle(bot: Bot, event: Event, arp: Arparma, state: T_Stat
         return
 
     absolute_path = resolve_quote_image_path(quote.image_path)
-    message_to_send = MessageUtils.build_message(absolute_path)
+
+    async with aiofiles.open(absolute_path, "rb") as f:
+        image_bytes = await f.read()
+    message_to_send = MessageUtils.build_message(image_bytes)
 
     if fallback_message:
         await fallback_message.send(target=target, bot=bot)
@@ -137,12 +142,18 @@ async def record_pool_handle(bot: Bot, event: Event, arp: Arparma, state: T_Stat
     await QuoteService.increment_view_count(quote.id)
     await message_to_send.send(target=target, bot=bot)
 
-    if os.path.isabs(quote.image_path):
+    if os.path.isabs(quote.image_path) or "\\" in quote.image_path:
         try:
-            relative_path = os.path.relpath(quote.image_path, DATA_PATH)
+            fixed_path = quote.image_path.replace("\\", "/")
+            if os.path.isabs(fixed_path):
+                relative_path = os.path.relpath(fixed_path, DATA_PATH)
+            else:
+                relative_path = fixed_path
+
+            relative_path = Path(relative_path).as_posix()
             quote.image_path = relative_path
             await quote.save(update_fields=["image_path"])
-            logger.info(f"已将语录 {quote.id} 的路径更新为相对路径: {relative_path}")
+            logger.info(f"已自动修复语录 {quote.id} 的路径格式: {relative_path}")
         except Exception as e:
             logger.warning(f"惰性迁移语录 {quote.id} 路径失败: {e}")
 
