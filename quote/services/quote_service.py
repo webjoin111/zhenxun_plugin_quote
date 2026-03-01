@@ -362,6 +362,14 @@ class QuoteService:
             return None
 
     @staticmethod
+    async def get_last_quote(group_id: str) -> Quote | None:
+        """获取群组内最后保存的一条语录"""
+        try:
+            return await Quote.filter(group_id=group_id).order_by("-id").first()
+        except Exception:
+            return None
+
+    @staticmethod
     async def get_all_quotes() -> list[Quote]:
         """获取所有语录"""
         try:
