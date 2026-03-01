@@ -4,7 +4,7 @@ import os
 import html
 import re
 import uuid
-from typing import cast
+from typing import Any, cast
 
 import aiofiles
 from arclet.alconna import Alconna, Args, Arparma, Option
@@ -28,6 +28,7 @@ from zhenxun import ui
 from zhenxun.configs.config import Config
 from zhenxun.services.log import logger
 from zhenxun.utils.message import MessageUtils
+from zhenxun.utils.http_utils import AsyncHttpx
 
 from ..config import ensure_quote_path
 from ..command.manage_commands import get_available_themes
@@ -195,6 +196,158 @@ async def _process_nested_reply(
     return None
 
 
+async def _get_member_details(
+    bot: Bot, group_id: str, user_id: str, fallback_sender: Any
+) -> tuple[str, str | None, str | None, str | None]:
+    """
+    获取群成员详细信息 (名片/昵称, 角色, 头衔, 等级)。
+    """
+    card, author_role, author_title, author_level_info = None, None, None, None
+    try:
+        # 尝试调用 API 获取最新信息
+        member_info = await bot.call_api(
+            "get_group_member_info",
+            group_id=int(group_id),
+            user_id=int(user_id),
+            no_cache=True,
+        )
+        if member_info and isinstance(member_info, dict):
+            card = member_info.get("card") or member_info.get("nickname") or user_id
+            author_role = member_info.get("role")
+            author_title = member_info.get("title")
+            author_level_info = (
+                f"LV{member_info.get('level')}" if member_info.get("level") else None
+            )
+        else:
+            raise ValueError("API返回数据异常")
+    except Exception:
+        # 回退到 sender 携带的信息
+        if isinstance(fallback_sender, dict):
+            card = (
+                fallback_sender.get("card")
+                or fallback_sender.get("nickname")
+                or user_id
+            )
+            author_role = fallback_sender.get("role")
+            author_title = fallback_sender.get("title")
+            author_level_info = (
+                f"LV{fallback_sender.get('level', '')}"
+                if fallback_sender.get("level")
+                else None
+            )
+        else:
+            # 处理对象类型的 fallback (如 event.sender)
+            card = (
+                getattr(fallback_sender, "card", None)
+                or getattr(fallback_sender, "nickname", None)
+                or user_id
+            )
+            author_role = getattr(fallback_sender, "role", None)
+            author_title = getattr(fallback_sender, "title", None)
+            author_level_info = (
+                f"LV{getattr(fallback_sender, 'level', '')}"
+                if getattr(fallback_sender, "level", None)
+                else None
+            )
+
+    return card, author_role, author_title, author_level_info
+
+
+async def _convert_msg_to_card(
+    bot: Bot,
+    group_id: str,
+    user_id: str,
+    uni_message: UniMessage,
+    sender_info: Any,
+    variant: str | None,
+    quoted_reply_data: QuotedReplyData | None = None,
+) -> tuple[QuoteCardData, str]:
+    """
+    将单条消息转换为语录卡片数据模型，并返回用于记录的纯文本。
+    """
+    # 1. 获取用户信息
+    card, role, title, level = await _get_member_details(
+        bot, group_id, user_id, sender_info
+    )
+
+    # 2. 获取头像
+    avatar_path = await avatar_service.get_avatar_path(
+        platform="qq", identifier=user_id
+    )
+    if not avatar_path:
+        raise NetworkError(f"获取用户 {user_id} 的头像失败")
+
+    async with aiofiles.open(avatar_path, "rb") as f:
+        avatar_bytes = await f.read()
+    avatar_base64 = base64.b64encode(avatar_bytes).decode("utf-8")
+
+    # 3. 处理消息内容
+    content_list = []
+    current_text_parts = []
+    text_for_record = ""
+
+    async def flush_text():
+        nonlocal current_text_parts, text_for_record
+        if current_text_parts:
+            full_text = "".join(current_text_parts)
+            content_list.append({"type": "text", "value": full_text})
+            text_for_record += re.sub(
+                r"<[^>]+>", "", full_text
+            )  # 简单去除HTML标签用于记录
+            current_text_parts = []
+
+    for seg in uni_message:
+        if isinstance(seg, Text) and seg.text:
+            current_text_parts.append(html.escape(seg.text))
+        elif isinstance(seg, At):
+            # 处理 At (尝试获取群名片)
+            at_name = seg.display or seg.target
+            try:
+                at_info = await bot.get_group_member_info(
+                    group_id=int(group_id), user_id=int(seg.target)
+                )
+                at_name = at_info.get("card") or at_info.get("nickname") or at_name
+            except Exception:
+                pass
+            current_text_parts.append(
+                f'<span class="message-at">@{html.escape(at_name)}</span>'
+            )
+        elif isinstance(seg, UniImage):
+            await flush_text()
+            text_for_record += "[图片]"
+            try:
+                if seg.path:
+                    async with aiofiles.open(seg.path, "rb") as img_f:
+                        img_bytes = await img_f.read()
+                elif seg.url:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.get(seg.url)
+                        resp.raise_for_status()
+                        img_bytes = resp.content
+                else:
+                    continue
+                img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+                content_list.append(
+                    {"type": "image", "value": f"data:image/png;base64,{img_b64}"}
+                )
+            except Exception as e:
+                logger.warning(f"处理语录内图片失败: {e}", "群聊语录")
+
+    await flush_text()
+
+    card_data = QuoteCardData(
+        avatar_data_url=f"data:image/png;base64,{avatar_base64}",
+        text=content_list,
+        author=card,
+        author_role=role,
+        author_title=title,
+        author_level=level,
+        variant=variant or "default",
+        quoted_reply=quoted_reply_data,
+    )
+    return card_data, text_for_record
+
+
 async def _generate_quote_from_reply(
     event: MessageEvent, bot: Bot, uni_message: UniMessage, variant: str | None = None
 ):
@@ -202,141 +355,25 @@ async def _generate_quote_from_reply(
     从回复消息中提取信息并生成语录图片。
     这是一个辅助函数，用于合并 make_record 和 render_quote 的公共逻辑。
     """
-    message_to_render = uni_message
-
     sender = event.reply.sender
     qqid = str(sender.user_id)
-
     replied_msg_id = cast(int, event.reply.message_id)
+
     full_replied_msg_info = await bot.get_msg(message_id=replied_msg_id)
     message_array = full_replied_msg_info.get("message", [])
     quoted_reply_data = await _process_nested_reply(message_array, bot)
 
     group_id = str(event.group_id)
 
-    card, author_role, author_title, author_level_info = None, None, None, None
-
     try:
-        logger.info(
-            f"开始调用 get_group_member_info API - Group: {group_id}, User: {qqid}",
-            "群聊语录",
-        )
-        member_info = await bot.call_api(
-            "get_group_member_info",
-            group_id=int(group_id),
-            user_id=int(qqid),
-            no_cache=True,
-        )
-        logger.debug(f"API 响应: {member_info}", "群聊语录")
-
-        if member_info and isinstance(member_info, dict):
-            card = member_info.get("card") or member_info.get("nickname") or qqid
-            author_role = member_info.get("role")
-            author_title = member_info.get("title")
-            author_level_info = (
-                f"LV{member_info.get('level')}" if member_info.get("level") else None
-            )
-            logger.info(
-                f"成功从 API 获取到详细信息 - 角色: {author_role}, 等级: {author_level_info}, 头衔: {author_title}",
-                "群聊语录",
-            )
-        else:
-            raise ValueError("API返回数据格式不正确或为空")
-
-    except Exception as e:
-        logger.warning(
-            f"调用 get_group_member_info API 失败: {e}。将回退到 event.reply.sender 数据。",
-            "群聊语录",
-            e=e,
-        )
-        card = sender.card or sender.nickname or qqid
-        author_role = getattr(sender, "role", None)
-        author_title = getattr(sender, "title", None)
-        author_level_info = (
-            f"LV{getattr(sender, 'level', '')}"
-            if getattr(sender, "level", None)
-            else None
+        card_data, _ = await _convert_msg_to_card(
+            bot, group_id, qqid, uni_message, sender, variant, quoted_reply_data
         )
 
-    try:
-        avatar_path = await avatar_service.get_avatar_path(
-            platform="qq", identifier=qqid
-        )
-        if not avatar_path:
-            raise NetworkError("获取头像失败")
+        # 直接渲染卡片
+        img_data = await ui.render(card_data)
 
-        async with aiofiles.open(avatar_path, "rb") as f:
-            avatar_data = await f.read()
-
-        content_list = []
-        current_text_parts = []
-
-        async def flush_text():
-            nonlocal current_text_parts
-            if current_text_parts:
-                content_list.append(
-                    {"type": "text", "value": "".join(current_text_parts)}
-                )
-                current_text_parts = []
-
-        for seg in message_to_render:
-            if isinstance(seg, Text):
-                if seg.text:
-                    current_text_parts.append(html.escape(seg.text))
-            elif isinstance(seg, At):
-                at_qq = seg.target
-                at_name = seg.display or at_qq
-                try:
-                    member_info = await bot.get_group_member_info(
-                        group_id=int(group_id), user_id=int(at_qq)
-                    )
-                    at_name = (
-                        member_info.get("card")
-                        or member_info.get("nickname")
-                        or at_name
-                    )
-                except Exception:
-                    pass
-                current_text_parts.append(
-                    f'<span class="message-at">@{html.escape(at_name)}</span>'
-                )
-            elif isinstance(seg, UniImage):
-                await flush_text()
-                try:
-                    if seg.path:
-                        async with aiofiles.open(seg.path, "rb") as img_f:
-                            img_bytes = await img_f.read()
-                    elif seg.url:
-                        async with httpx.AsyncClient() as client:
-                            resp = await client.get(seg.url)
-                            resp.raise_for_status()
-                            img_bytes = resp.content
-                    else:
-                        continue
-
-                    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-                    content_list.append(
-                        {
-                            "type": "image",
-                            "value": f"data:image/png;base64,{img_base64}",
-                        }
-                    )
-                except Exception as e:
-                    logger.warning(f"处理语录内图片失败: {e}", "群聊语录", e=e)
-
-        await flush_text()
-
-        img_data = await QuoteService.generate_temp_quote(
-            avatar_bytes=avatar_data,
-            text=content_list,
-            author=card,
-            variant=variant or None,
-            author_role=author_role,
-            author_title=author_title,
-            author_level=author_level_info,
-            quoted_reply=quoted_reply_data,
-        )
-        return (img_data, card, qqid, quoted_reply_data), None
+        return (img_data, card_data.author, qqid, quoted_reply_data), None
     except (NetworkError, ImageProcessError, FileNotFoundError) as e:
         return None, str(e)
     except Exception as e:
@@ -365,35 +402,14 @@ async def _generate_sequence_from_history(
         qqid = str(sender["user_id"])
         last_quoted_user_id = qqid
 
-        card, author_role, author_title, author_level_info = None, None, None, None
-        try:
-            member_info = await bot.get_group_member_info(
-                group_id=int(group_id), user_id=int(qqid), no_cache=True
-            )
-            card = member_info.get("card") or member_info.get("nickname") or qqid
-            author_role = member_info.get("role")
-            author_title = member_info.get("title")
-            author_level_info = (
-                f"LV{member_info.get('level')}" if member_info.get("level") else None
-            )
-        except Exception:
-            card = sender.get("card") or sender.get("nickname") or qqid
-
-        avatar_path = await avatar_service.get_avatar_path(
-            platform="qq", identifier=qqid
-        )
-        if not avatar_path:
-            raise NetworkError(f"获取用户 {qqid} 的头像失败")
-
-        async with aiofiles.open(avatar_path, "rb") as f:
-            avatar_data = await f.read()
-
         raw_message_array = msg_info.get("message", [])
         if isinstance(raw_message_array, str):
             raw_message_array = [{"type": "text", "data": {"text": raw_message_array}}]
 
+        # 处理嵌套引用
         reply_prefix = ""
         quoted_reply_data = await _process_nested_reply(raw_message_array, bot)
+
         if quoted_reply_data:
             quoted_text_parts = []
             for seg in quoted_reply_data.text:
@@ -410,77 +426,13 @@ async def _generate_sequence_from_history(
         )
         uni_message = await UniMessage.generate(message=message_obj, bot=bot)
 
-        content_list = []
-        current_text_parts = []
-        text_for_record = ""
-
-        async def flush_text_seq():
-            nonlocal current_text_parts, text_for_record
-            if current_text_parts:
-                full_text = "".join(current_text_parts)
-                content_list.append({"type": "text", "value": full_text})
-                text_for_record += re.sub(r"<[^>]+>", "", full_text)
-                current_text_parts = []
-
-        for seg in uni_message:
-            if isinstance(seg, Text) and seg.text:
-                current_text_parts.append(html.escape(seg.text))
-            elif isinstance(seg, At):
-                at_qq = seg.target
-                at_name = seg.display or at_qq
-                try:
-                    member_info_at = await bot.get_group_member_info(
-                        group_id=int(group_id), user_id=int(at_qq)
-                    )
-                    at_name = (
-                        member_info_at.get("card")
-                        or member_info_at.get("nickname")
-                        or at_name
-                    )
-                except Exception:
-                    pass
-                current_text_parts.append(
-                    f'<span class="message-at">@{html.escape(at_name)}</span>'
-                )
-            elif isinstance(seg, UniImage):
-                await flush_text_seq()
-                text_for_record += "[图片]"
-                try:
-                    if seg.path:
-                        async with aiofiles.open(seg.path, "rb") as img_f:
-                            img_bytes = await img_f.read()
-                    elif seg.url:
-                        async with httpx.AsyncClient() as client:
-                            resp = await client.get(seg.url)
-                            resp.raise_for_status()
-                            img_bytes = resp.content
-                    else:
-                        continue
-                    img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-                    content_list.append(
-                        {
-                            "type": "image",
-                            "value": f"data:image/png;base64,{img_base64}",
-                        }
-                    )
-                except Exception as e:
-                    logger.warning(f"处理语录内图片失败: {e}", "群聊语录", e=e)
-
-        await flush_text_seq()
-        recorded_text_parts.append(f"{reply_prefix}{card}: {text_for_record}")
-
-        card_data_list.append(
-            QuoteCardData(
-                avatar_data_url=f"data:image/png;base64,{base64.b64encode(avatar_data).decode('utf-8')}",
-                text=content_list,
-                author=card,
-                author_role=author_role,
-                author_title=author_title,
-                author_level=author_level_info,
-                variant=variant or "default",
-                quoted_reply=quoted_reply_data,
-            )
+        # 调用统一转换器
+        card_data, text_content = await _convert_msg_to_card(
+            bot, group_id, qqid, uni_message, sender, variant, quoted_reply_data
         )
+
+        recorded_text_parts.append(f"{reply_prefix}{card_data.author}: {text_content}")
+        card_data_list.append(card_data)
 
     sequence_data = QuoteSequenceData(messages=card_data_list)
     img_data = await ui.render(sequence_data)
@@ -515,124 +467,62 @@ async def save_img_handle(bot: Bot, event: MessageEvent, arp: Arparma, state: T_
     message_id = event.message_id
     user_id = str(event.get_user_id())
 
-    file_name = ""
-    image_url_for_httpx = None
+    target_image: UniImage | None = arp.query("image")
 
-    image_from_alconna = arp.query("image", None)
-    has_image_in_command = False
+    # 1. 尝试从回复中获取图片
+    if not target_image:
+        if reply := await reply_fetch(event, bot):
+            if reply.msg:
+                reply_uni = await UniMessage.generate(message=reply.msg, bot=bot)
+                for seg in reply_uni:
+                    if isinstance(seg, UniImage):
+                        target_image = seg
+                        break
 
-    if image_from_alconna:
-        has_image_in_command = True
-        if hasattr(image_from_alconna, "data"):
-            file_name = image_from_alconna.data.get("file", "")
-            image_url_for_httpx = image_from_alconna.data.get("url", None)
-            logger.info(
-                f"从 Alconna 解析结果中获取图片: file={file_name}, url={image_url_for_httpx}",
-                "群聊语录",
-            )
-
-    if not has_image_in_command:
-        for seg in event.message:
-            if seg.type == "image":
-                file_name = seg.data.get("file", "")
-                image_url_for_httpx = seg.data.get("url", None)
-                has_image_in_command = True
-                logger.info(
-                    f"在命令中找到图片: file={file_name}, url={image_url_for_httpx}",
-                    "群聊语录",
-                )
+    # 2. 尝试从当前消息中获取 (处理 Alconna 可能未捕获的情况)
+    if not target_image:
+        current_uni = await UniMessage.generate(event=event, bot=bot)
+        for seg in current_uni:
+            if isinstance(seg, UniImage):
+                target_image = seg
                 break
 
-    if not has_image_in_command:
-        if event.reply:
-            for seg in event.reply.message:
-                if seg.type == "image":
-                    file_name = seg.data.get("file", "")
-                    image_url_for_httpx = seg.data.get("url", None)
-                    break
-            if not file_name and not image_url_for_httpx:
-                await save_img_cmd.finish(
-                    "回复的消息中未直接找到图片文件标识或URL，请确认回复的是图片消息。"
-                )
-            elif not file_name and image_url_for_httpx:
-                logger.info(
-                    f"未在回复中找到图片file字段, 但找到了URL: {image_url_for_httpx}. 尝试使用httpx下载.",
-                    "群聊语录",
-                )
-        else:
-            await save_img_cmd.finish("请直接发送「上传+图片」或回复图片消息来上传语录")
+    if not target_image:
+        await save_img_cmd.finish("请直接发送「上传+图片」或回复图片消息来上传语录")
 
-    image_path = ""
-
-    if file_name:
-        try:
-            resp_image_info = await bot.call_api("get_image", **{"file": file_name})
-            image_local_path_gocq = resp_image_info["file"]
-            if not os.path.exists(image_local_path_gocq):
-                logger.warning(
-                    f"实现端返回的路径不可达: {image_local_path_gocq}, 尝试 URL 下载",
-                    "群聊语录",
-                )
-                if image_url_for_httpx:
-                    file_name = ""
-                    raise FileNotFoundError("实现端路径在当前系统不存在")
-                else:
-                    await save_img_cmd.finish("图片路径不可达且无下载URL，上传失败")
-                    return
-            base_img_name = os.path.basename(image_local_path_gocq)
-            quote_path = ensure_quote_path()
-            image_path = quote_path / base_img_name
-            async with aiofiles.open(image_local_path_gocq, "rb") as src:
-                content = await src.read()
-            async with aiofiles.open(image_path, "wb") as dst:
-                await dst.write(content)
-
-        except Exception as e:
-            logger.warning(
-                f"bot.call_api get_image 失败 (file={file_name})，错误: {e}. "
-                f"如果提供了URL ({image_url_for_httpx}), 尝试 httpx 下载.",
-                "群聊语录",
-                e=e,
-            )
-            if image_url_for_httpx:
-                file_name = ""
-            else:
-                await save_img_cmd.finish(f"处理图片失败: {e}")
-                return
-
-    img_data = None
-    temp_image_path = None
-
-    if not image_path and image_url_for_httpx:
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(image_url_for_httpx)
-                if response.status_code == 200:
-                    img_data = response.content
-                    quote_path = ensure_quote_path()
-                    temp_image_path = quote_path / f"temp_{uuid.uuid4().hex}.png"
-                    async with aiofiles.open(temp_image_path, "wb") as f:
-                        await f.write(img_data)
-                else:
-                    await save_img_cmd.finish(
-                        f"httpx 下载失败, status: {response.status_code}"
-                    )
-                    return
-        except Exception as httpx_e:
-            await save_img_cmd.finish(f"httpx 下载异常: {httpx_e}")
-            return
-    elif image_path:
-        try:
-            async with aiofiles.open(image_path, "rb") as f:
+    # 3. 统一提取图片二进制数据
+    img_data = b""
+    try:
+        if target_image.raw:
+            img_data = target_image.raw
+        elif target_image.path and os.path.exists(target_image.path):
+            async with aiofiles.open(target_image.path, "rb") as f:
                 img_data = await f.read()
-            temp_image_path = image_path
-        except Exception as e:
-            await save_img_cmd.finish(f"读取图片失败: {e}")
-            return
+        elif target_image.url:
+            img_data = await AsyncHttpx.get_content(target_image.url)
+        elif target_image.id and hasattr(bot, "get_image"):
+            # 针对 OneBot V11 本地路径/URL 的回退处理
+            resp = await bot.get_image(file=target_image.id)
+            if file_path := resp.get("file"):
+                if os.path.exists(file_path):
+                    async with aiofiles.open(file_path, "rb") as f:
+                        img_data = await f.read()
+            if not img_data and (url := resp.get("url")):
+                img_data = await AsyncHttpx.get_content(url)
+    except Exception as e:
+        logger.warning(f"获取图片数据失败: {e}", "群聊语录")
 
-    if not img_data or not temp_image_path:
-        await save_img_cmd.finish("未能成功获取图片数据.")
-        return
+    if not img_data:
+        await save_img_cmd.finish("未能成功获取图片数据，请检查图片是否有效。")
+
+    # 4. 创建临时文件以供后续 OCR 和哈希计算使用
+    quote_path = ensure_quote_path()
+    temp_image_path = quote_path / f"temp_{uuid.uuid4().hex}.png"
+    try:
+        async with aiofiles.open(temp_image_path, "wb") as f:
+            await f.write(img_data)
+    except Exception as e:
+        await save_img_cmd.finish(f"写入临时文件失败: {e}")
 
     if "group" in session_id:
         group_id = session_id.split("_")[1]

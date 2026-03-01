@@ -1,9 +1,8 @@
-# 基础依赖
 spacy_pkuseg>=0.0.25
 cachetools>=5.0.0
-# OCR引擎依赖
-# easyocr>=1.7.0
+paddleocr>=2.9.1,<3.0.0
+paddlepaddle>=2.6.2,<3.0.0
+setuptools
 
 # 可选OCR引擎
-# paddleocr>=2.9.1,<3.0.0
-# paddlepaddle>=2.6.2,<3.0.0
+# easyocr>=1.7.0

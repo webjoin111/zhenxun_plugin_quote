@@ -1,6 +1,3 @@
-import os
-from pathlib import Path
-
 import aiofiles
 from arclet.alconna import Alconna, Args, Arparma, Subcommand, MultiVar
 from nonebot.adapters.onebot.v11 import Bot, Event
@@ -15,7 +12,6 @@ from zhenxun.utils.platform import PlatformUtils
 from ..config import (
     safe_file_exists,
     resolve_quote_image_path,
-    DATA_PATH,
 )
 from ..model import Quote
 from ..services.quote_service import QuoteService
@@ -141,21 +137,6 @@ async def record_pool_handle(bot: Bot, event: Event, arp: Arparma, state: T_Stat
 
     await QuoteService.increment_view_count(quote.id)
     await message_to_send.send(target=target, bot=bot)
-
-    if os.path.isabs(quote.image_path) or "\\" in quote.image_path:
-        try:
-            fixed_path = quote.image_path.replace("\\", "/")
-            if os.path.isabs(fixed_path):
-                relative_path = os.path.relpath(fixed_path, DATA_PATH)
-            else:
-                relative_path = fixed_path
-
-            relative_path = Path(relative_path).as_posix()
-            quote.image_path = relative_path
-            await quote.save(update_fields=["image_path"])
-            logger.info(f"已自动修复语录 {quote.id} 的路径格式: {relative_path}")
-        except Exception as e:
-            logger.warning(f"惰性迁移语录 {quote.id} 路径失败: {e}")
 
 
 @quote_stats_cmd.handle()
